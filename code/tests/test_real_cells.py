@@ -1,5 +1,6 @@
-"""The real-weight cells of ``costs/bench.py``, ``costs/setup_timing.py``, ``deployment/serve_ab.py``, ``costs/perf.py``,
-``v1/v1_bytes.py`` and ``generation/gen_bench.py`` (``--real``, :mod:`experiments.common.real_cells`) on a tiny random OPT and a tiny random Llama built in this process: the loaders
+"""The real-weight cells of ``costs/bench.py``, ``costs/setup_timing.py``, ``deployment/serve_ab.py``,
+``costs/perf.py``, ``v1/v1_bytes.py`` and ``generation/gen_bench.py`` (``--real``,
+:mod:`experiments.common.real_cells`) on a tiny random OPT and a tiny random Llama built in this process: the loaders
 of :mod:`experiments.common.checkpoints` are replaced, so nothing is downloaded.
 
 Each script builds the checkpoint's integer graph as ``perf.py --real`` does (``checkpoints.real_graph``: the

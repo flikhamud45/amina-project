@@ -143,6 +143,7 @@ MODEL_SPECS = {
 
 
 def build_float_model(kind: str, n_classes: int) -> nn.Module:
+    """A freshly initialised float model of architecture ``kind`` (the first entry of a ``MODEL_SPECS`` value)."""
     if kind == "lenet5":
         return LeNet5(n_classes)
     if kind in ("vgg11", "vgg16"):

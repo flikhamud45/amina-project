@@ -423,8 +423,8 @@ def _attacks(graph, coms, x):
     rows = coms[victim].public.n_rows
     final = mats[-1]
     folded = _folded(graph, coms)
-    # u + 1 (every entry) passes Freivalds where [X ; 1] sums to 0 in every column -- which a normed
-    # input of one column (a pruned block's q) can: a folded op of several claim columns then
+    # u + 1 (every entry) passes Freivalds where [X ; 1] sums to 0 in every column, which a normed input of
+    # one column (a pruned block's q) can do: so the u victim is a folded op of several claim columns
     wide = [op.name for op in folded if dict(zip((o.name for o in mats), graph.claim_columns(x)))[op.name] > 1]
     wide = wide or [op.name for op in folded]
     u_victim = victim if matrix.layout == "row" else wide[len(wide) // 2]

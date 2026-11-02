@@ -92,7 +92,7 @@ def _both(prover, pair, x, seed, **kw):
     assert b["bytes"]["claims"] == a["bytes"]["claims"]
     if a["accepted"]:
         assert b["bytes"] == a["bytes"]
-    else:        # the streaming verifier also received the messages run_query no longer asks for
+    else:        # the streaming verifier also received the messages run_query stops asking for after a rejection
         assert all(a["bytes"][k] in (0, b["bytes"][k]) for k in a["bytes"])
     for r in (a, b):
         assert "prove_encode" in r["timings"] and "verify_decode" in r["timings"]

@@ -73,7 +73,7 @@ def test_the_key_separates_weights_biases_and_plans(tmp_path):
     other2 = copy.deepcopy(graph)
     next(op for op in other2.mat_ops if op.name == biased.name).bias.view(-1)[0] += 1
     assert setup_cache.key(other2, 4, plan("R8c")) != k
-    # a different weight with the same key cannot happen; the same weights under a new name (tag) differ too
+    # a cache written for these weights is never read for other weights
     proto.commit_graph(graph, 4, policy="R8c", cache=tmp_path)
     assert proto.commit_graph(other, 4, policy="R8c", cache=tmp_path).setup_cache == "miss"
 

@@ -21,7 +21,8 @@ model ("in separate runs"), and prints nothing for another GPU.
 ## Through the run package
 
 ```bash
-bash code/experiments/package/run.sh --platform final --llama-licence --one-job zkllm     # a whole-node job (the final run: --one-job gpuv zkllm)
+bash code/experiments/package/run.sh --platform final --llama-licence --one-job zkllm     # one whole-node job
+bash code/experiments/package/run.sh --platform final --llama-licence --one-job gpuv zkllm  # with the gpuv tier, as the final run
 ```
 
 or as part of `run.sh --platform final --optional --llama-licence all`. The tier has five jobs: `zk-build` (2 h
@@ -72,7 +73,7 @@ put it on the `PATH` of the shell that runs `run.sh` (sbatch passes the environm
 `run_zkllm.sh prove --home DIR --size 7|13 --out OUT [--seqs 64,512,1024,2048] [--allow-failed-lengths] [--reps 3]
 [--layers 0,1] [--scratch DIR] [--parquet FILE] [--threads 8] [--time-cmd PATH]`:
 
-1. removes the work folders that a pre-empted job of this user left, checks the scratch space (32 GB for
+1. removes the work folders that a pre-empted job of the same account left, checks the scratch space (32 GB for
    Llama-2-7B, 58 GB for Llama-2-13B) and links `DIR/zkllm/zkllm-workdir` to a
    fresh folder in it;
 2. runs zkLLM's `llama-ppgen.py` and `llama-commit.py <size> 16` once: zkLLM's public parameters are sized by the

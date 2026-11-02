@@ -29,25 +29,25 @@ The jobs write JSON lines; `experiments/paper/numbers.py` turns them into the pa
 | No Hugging Face cache variable that overrides `HF_HOME` with a folder the jobs cannot write | `HF_HUB_CACHE`, `TRANSFORMERS_CACHE` and `HF_DATASETS_CACHE` take precedence over `HF_HOME` | `env \| grep -E 'HF_HUB_CACHE\|TRANSFORMERS_CACHE\|HF_DATASETS_CACHE'`; `run.sh` refuses an unwritable one (`unset` it) |
 
 The cost tiers' language-model cells take the real checkpoints (`--real`, `experiments/common/real_cells.py`): their
-integer graphs are built as the certified models are (OPT with `hf_opt.CERTIFIED_RECIPE`, Llama-2 and Qwen3-4B with
-the main Llama recipe and its fixed public prefix) and queried on WikiText-2 windows. One rule decides each cell
-(`rw` in `run.sh`, `real_cells.main_checkpoint` in Python, by which `numbers.py` reads the records): Llama-2-7B and
-Llama-2-13B (with `--llama-licence`), OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B are real wherever the prompt, the
-generated tokens and a Llama-family recipe's fixed prefix fit the checkpoint's trained context (Llama-2: cells up to
-2,048 tokens); GPT-2, the image models, the 4,096-token cells and the whole long-prompt curve (the `long` tier, the
-GPU verifier's long cells `g-long-*`, V1's codec curve `v1-codec-llama7-*`) keep random weights of the same shapes,
-so that each curve is measured on one kind of weights. The `real` tier keeps its real-weight cells next to their
-random-weight twins, which measure how much the values matter. A re-execution job measures its 2-block rows on random
-weights and its full model on the checkpoint (`reexec.py --real` measures the full graph only), and the 8- against
-11-bit A/B of the `improve` tier stays on random weights (a checkpoint's recipe fixes the scale). A real-weight job
-loads its checkpoint in fp32 (about 27 GB for a 7B model, 52 GB for Llama-2-13B; peaks of about 40 and 78 GB during
-the calibration, 60 to 90 GB for a 7B re-execution job, which also holds the float weights) and calibrates it on the
-CPU (about 10 to 30 minutes for a 7B model, twice that for Llama-2-13B): its time limit is one hour longer (two for
-Llama-2-13B, one more for a re-execution job) and it asks for at least 128 GB (256 GB for Llama-2-13B).
-`--random-weights` restores the previous run, every cost cell on random weights (the `real` tier unchanged), with its
-job limits and estimates. The Llama-2 cells need the Llama-2 licence on your own Hugging Face account and your own
-token, and are real only with `--llama-licence` (without it the Llama-2 cost cells take random weights, and the
-`real`, `qllama`, `qcheck` and `zkllm` tiers' Llama-2 cells do not run).
+integer graphs are built as the certified models are (OPT with `hf_opt.CERTIFIED_RECIPE`, Llama-2 and Qwen3-4B with the
+main Llama recipe and its fixed public prefix) and queried on WikiText-2 windows. One rule decides each cell (`rw` in
+`run.sh`, `real_cells.main_checkpoint` in Python, by which `numbers.py` reads the records): Llama-2-7B and Llama-2-13B
+(with `--llama-licence`), OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B are real wherever the prompt, the generated tokens
+and a Llama-family recipe's fixed prefix fit the checkpoint's trained context (Llama-2: cells up to 2,048 tokens);
+GPT-2, the image models, the 4,096-token cells and the whole long-prompt curve (the `long` tier, the GPU verifier's long
+cells `g-long-*`, V1's codec curve `v1-codec-llama7-*`) keep random weights of the same shapes, so that each curve is
+measured on one kind of weights. The `real` tier keeps its real-weight cells next to their random-weight twins, which
+measure how much the values matter. A re-execution job measures its 2-block rows on random weights and its full model on
+the checkpoint (`reexec.py --real` measures the full graph only), and the 8- against 11-bit A/B of the `improve` tier
+stays on random weights (a checkpoint's recipe fixes the scale). A real-weight job loads its checkpoint in fp32 (about
+27 GB for a 7B model, 52 GB for Llama-2-13B; peaks of about 40 and 78 GB during the calibration, 60 to 90 GB for a 7B
+re-execution job, which also holds the float weights) and calibrates it on the CPU (about 10 to 30 minutes for a 7B
+model, twice that for Llama-2-13B): its time limit is one hour longer (two for Llama-2-13B, one more for a re-execution
+job) and it asks for at least 128 GB (256 GB for Llama-2-13B). `--random-weights` puts every cost cell on random weights
+(the `real` tier unchanged), with the shorter job limits and estimates of that configuration. The Llama-2 cells need the
+Llama-2 licence on your own Hugging Face account and your own token, and are real only with `--llama-licence` (without
+it the Llama-2 cost cells take random weights, and the `real`, `qllama`, `qcheck` and `zkllm` tiers' Llama-2 cells do
+not run).
 
 ## 2. Setup
 
@@ -173,13 +173,13 @@ whole-node jobs:
 bash code/experiments/package/run.sh --platform final --optional --llama-licence all
 ```
 
-On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain
-waits that long for each of its 246 jobs. There, the paper's run submits its tiers as fifteen jobs (`--one-job`), each of
+On a shared partition a job that asks for a whole node waits until every job on some node has ended, and the chain waits
+that long for each of its 246 jobs. There, the paper's run submits its tiers as fifteen jobs (`--one-job`), each of
 which runs its tiers' jobs one after another in its allocation: the timed tiers in ten jobs that have a node to
-themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one GPU of a
-shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates nothing:
-its pytest summary gives the text's `\SmokeTests` and its exactness tests the platform's GPU-against-CPU agreement, so
-it is submitted on its own:
+themselves, and the tiers that time nothing (`quality`, `qllama`, `qcheck`, `tv`, `attack`, `smoke`) in five jobs on one
+GPU of a shared node each, which can run at the same time. The smoke here is a job of the run like the others and gates
+nothing: its pytest summary gives the text's `\SmokeTests` and its exactness tests the platform's GPU-against-CPU
+agreement, so it is submitted on its own:
 
 ```bash
 R="bash code/experiments/package/run.sh --platform final --llama-licence --gres gpu:l40s:1 \
@@ -201,17 +201,15 @@ $R --one-job --no-exclusive tv attack      # 9-12 h, not timed
 $R --one-job --no-exclusive smoke          # 1.5-2 h, not timed: the test suite and xcheck on the run's GPU and CPU
 ```
 
-The expected hours of a submission are the sums of its tiers' estimates (`# tier <tier>: ..., estimate <h> h` in the
-dry run). The real checkpoints' loads and calibrations (Sec. 2) lengthen the cost tiers, so the run of random weights'
-eight timed submissions is here ten: `serve gen batch` became `serve gen` and `improve batch`, `v1 setup improve`
-became `v1 setup`, and `gpuv zkllm` became `gpuv` and `zkllm`, each of which fits one allocation's 24 hours with room;
-`bench` (17.5-33 h) and `cpux` (13-24 h), which no split of tiers shortens, may need a second allocation: submitted
-again after the first ends at its limit, the same command runs only the jobs not yet ended successfully. With
-`--random-weights` the thirteen submissions of the random-weight run apply (`serve gen batch`, `v1 setup improve`,
-`gpuv zkllm`). With `--dry-run` in front of `--one-job`,
-each submission prints its allocation's `sbatch` line and then the line below (and, where its job limits add up to
-more than 24 h, a last line saying that the same command, submitted again, runs only the jobs not yet ended
-successfully). Together the fifteen hold every job of `--optional all` once (246 jobs, 669 h of limits):
+The expected hours of a submission are the sums of its tiers' estimates (`# tier <tier>: ..., estimate <h> h` in the dry
+run). The real checkpoints' loads and calibrations (Sec. 2) lengthen the cost tiers, so the timed tiers are grouped into
+ten submissions, each of which fits one allocation's 24 hours with room; `bench` (17.5-33 h) and `cpux` (13-24 h), which
+no split of tiers shortens, may need a second allocation: submitted again after the first ends at its limit, the same
+command runs only the jobs not yet ended successfully. With `--random-weights` the cost tiers are shorter and thirteen
+submissions suffice (`serve gen batch`, `v1 setup improve` and `gpuv zkllm` as one submission each). With `--dry-run` in
+front of `--one-job`, each submission prints its allocation's `sbatch` line and then the line below (and, where its job
+limits add up to more than 24 h, a last line saying that the same command, submitted again, runs only the jobs not yet
+ended successfully). Together the fifteen hold every job of `--optional all` once (246 jobs, 669 h of limits):
 
 | Submission | Its dry run's `# one job:` line |
 |---|---|
@@ -270,29 +268,29 @@ if it succeeds, which the run above does not need.
 | `zkllm` (optional) | 5 (0) | 6-9 | 14 (0) | zkLLM's public demo (commit `993311e`, unchanged) on the run's GPU: its build, then Llama-2-7B and Llama-2-13B at 2,048 tokens (one job each), then each model at the other lengths of `--zkllm-seqs` (default 64, 512 and 1,024 tokens; one job each, on one setup shared by its lengths; a length that zkLLM's demo does not prove is recorded as failed and the job goes on), 3 repetitions of layers 0 and 1, each proof binary timed (`logs/<name>/zkllm/`): zkLLM's prover on the same GPU model (`\ZkllmSameGpu...`, Sec. `sec:eval-compare`; at the other lengths `tab:zkllm-lengths`, `\ZkllmSameGpuShortSeq`, `\ZkllmSameGpuFactorShortRange`, `\ZkllmSameGpuFactorLengthRange`), in place of the stored runs (`artifacts/results/zkllm_l40s/`), and the text's "in the same run" (`experiments/comparison/zkllm/README.md`) |
 
 `--optional` adds the `long` tier, which the paper's Discussion and `tab:eval-long` read, and the `zkllm` tier (with
-`--llama-licence` only). Submit them in the same invocation as the other tiers, so that they are chained after them
-and gated by the smoke; a second invocation starts a new chain. Without a Llama-2 licence, leave out
-`--llama-licence`: the Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, and the
-qcheck tier OpenLLaMA-7B's calibration draws, which the paper does not report). The counts and limits are those with
-`--llama-licence`; without it (in parentheses) the Llama-2 cost cells take random weights (job limits as in the
-parentheses of the cost tiers), the `real` tier has 19 jobs and 34 h of limits and the `qllama` tier 2 jobs and 14 h.
-`all` is then 199 jobs and 421 h of limits (218 and 598 h with `--llama-licence`; the `long` tier adds 23 jobs and
-57 h, and the `zkllm` tier, with `--llama-licence`, 5 jobs and 14 h: `run.sh --platform final --optional
---llama-licence --dry-run all` lists 246 jobs and 669 h; with `--random-weights`, 552 h). Every cell of the `long`
-tier, the GPU verifier's long cells and V1's codec curve is on random weights, the full model at 2,048 tokens too
-(`l-llama7-2048-full`, `l-rx-llama7-2048-full` and the full model in `g-long-llama7-2048` and `g-long-rx-llama7`),
-so that `tab:eval-long-check` sets the fit against measurements of the same weights. The `long` tier's full
-model at 8,192 tokens (2 jobs, 11 h of limits) runs by default; `--no-bigmem` leaves it out on nodes with less than 256 GB, and
-`tab:eval-long-check`'s 8,192-token row then stays empty. Its prover's claims (40.6 GiB of int32 next to 6.3 GiB of
-weights) do not fit on the L40S: this job alone passes `--host-claims auto` (every other job keeps the default
-`device`, all claims on the GPU), which keeps 32 GiB of them on the GPU and stages the rest in pinned host memory (the same proof; the record's `claims_staged`; `experiments/costs/README.md`, `perf.py`).
-Likewise `--gkr-memory` keeps its default path in every job but the V1 cells at 2,048 tokens that would run out of GPU
-memory without it: the full Llama-2-7B's and the GPU-verifier V1 cells pass `--gkr-memory auto`, OPT-6.7B's (42.5 of
-44.5 GiB predicted) `--gkr-memory auto --gkr-memory-budget 100`, which keeps the default path unless the whole GPU
-would not do (`experiments/v1/README.md`, "GPU memory of the GKR", lists the cells; the record's `v1_full.gkr_memory`).
-Likewise `--decode-memory auto`, the GPU verifier's decoder in bounded memory, goes to the streaming GPU-verifier
-cells of the real Llama-2-7B and Llama-2-13B at 2,048 tokens alone (`b-cg-llama2-7b-2k`, `b-cg-llama2-13b-2k`;
-`experiments/costs/README.md`; the record's `decode_memory`).
+`--llama-licence` only). Submit them in the same invocation as the other tiers, so that they are chained after them and
+gated by the smoke; a second invocation starts a new chain. Without a Llama-2 licence, leave out `--llama-licence`: the
+Llama-2 cells then stay empty (the qllama tier runs OpenLLaMA-7B's two jobs instead, and the qcheck tier OpenLLaMA-7B's
+calibration draws, which the paper does not report). The counts and limits are those with `--llama-licence`; without it
+(in parentheses) the Llama-2 cost cells take random weights (job limits as in the parentheses of the cost tiers), the
+`real` tier has 19 jobs and 34 h of limits and the `qllama` tier 2 jobs and 14 h. `all` is then 199 jobs and 421 h of
+limits (218 and 598 h with `--llama-licence`; the `long` tier adds 23 jobs and 57 h, and the `zkllm` tier, with
+`--llama-licence`, 5 jobs and 14 h: `run.sh --platform final --optional --llama-licence --dry-run all` lists 246 jobs
+and 669 h; with `--random-weights`, 552 h). Every cell of the `long` tier, the GPU verifier's long cells and V1's codec
+curve is on random weights, the full model at 2,048 tokens too (`l-llama7-2048-full`, `l-rx-llama7-2048-full` and the
+full model in `g-long-llama7-2048` and `g-long-rx-llama7`), so that `tab:eval-long-check` sets the fit against
+measurements of the same weights. The `long` tier's full model at 8,192 tokens (2 jobs, 11 h of limits) runs by default;
+`--no-bigmem` leaves it out on nodes with less than 256 GB, and `tab:eval-long-check`'s 8,192-token row then stays
+empty. Its prover's claims (40.6 GiB of int32 next to 6.3 GiB of weights) do not fit on the L40S: this job alone passes
+`--host-claims auto` (every other job keeps the default `device`, all claims on the GPU), which keeps 32 GiB of them on
+the GPU and stages the rest in pinned host memory (the same proof; the record's `claims_staged`;
+`experiments/costs/README.md`, `perf.py`). Likewise `--gkr-memory` keeps its default path in every job but the V1 cells
+at 2,048 tokens that would run out of GPU memory without it: the full Llama-2-7B's and the GPU-verifier V1 cells pass
+`--gkr-memory auto`, OPT-6.7B's (42.5 of 44.5 GiB predicted) `--gkr-memory auto --gkr-memory-budget 100`, which keeps
+the default path unless the whole GPU would not do (`experiments/v1/README.md`, "GPU memory of the GKR", lists the
+cells; the record's `v1_full.gkr_memory`). Likewise `--decode-memory auto`, the GPU verifier's decoder in bounded
+memory, goes to the streaming GPU-verifier cells of the real Llama-2-7B and Llama-2-13B at 2,048 tokens alone
+(`b-cg-llama2-7b-2k`, `b-cg-llama2-13b-2k`; `experiments/costs/README.md`; the record's `decode_memory`).
 
 The time limits are caps: a job ends when its work is done. One tier at a time also works (`run.sh --platform final
 cpuv`, then `v1`, ...); its jobs are chained among themselves. Every mode-C cell takes `--policy` (default `cnn18c`)
@@ -381,20 +379,20 @@ PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs
 #  (the first numbers command: coverage and checks; the second writes paper_sp2027/generated/)
 ```
 
-The report's first line names the main cells' weights (`main cells on the real checkpoints (with the Llama-2
-licence)`), which `numbers.py` takes from the records (`--weights` and `--llama-licence`, default `auto`; for a run of
-`--random-weights` or without `--llama-licence` they follow by themselves): a main cell is read only from records of
-its weights, so a missing real record is a missing cell, never filled from a random-weight record.
-The coverage report names every job without records (with `--expect`); its last lines list every table cell and
-every macro that the run does not provide (`MISSING: ...`, one per line; `COMPLETE: ...` when there is none). A
-`CHECK FAILED` or `PARSE` line, or any missing cell or macro, gives exit status 1 (`--strict`: also a job without
-results). Its `machines:` line lists the nodes and drivers the jobs ran on (several are allowed), and jobs whose logs
-or records name another GPU or CPU model than the rest are a `CHECK FAILED platform` line that names them. Its `environment:` and `telemetry:` lines count the node snapshots and
-the timed jobs sampled; a field of `env.json` on which the nodes differ (the driver, the compiler, the packages, the
-governors, ...), a stored network whose hash fails, and a timed job during which the GPU was slowed by a power or
-thermal limit or ran another process at the start are `WARNING env` and `WARNING telemetry` lines, which change no
-exit status. A second platform that runs the smoke tier at the same commit (`run.sh --platform <other> --require-gpu
-<its GPU> --require-cpu any smoke`) checks the `xcheck` cells against this run with `python -m
+The report's first line names the main cells' weights (`main cells on the real checkpoints (with the Llama-2 licence)`),
+which `numbers.py` takes from the records (`--weights` and `--llama-licence`, default `auto`; for a run of
+`--random-weights` or without `--llama-licence` they follow by themselves): a main cell is read only from records of its
+weights, so a missing real record is a missing cell, never filled from a random-weight record. The coverage report names
+every job without records (with `--expect`); its last lines list every table cell and every macro that the run does not
+provide (`MISSING: ...`, one per line; `COMPLETE: ...` when there is none). A `CHECK FAILED` or `PARSE` line, or any
+missing cell or macro, gives exit status 1 (`--strict`: also a job without results). Its `machines:` line lists the
+nodes and drivers the jobs ran on (several are allowed), and jobs whose logs or records name another GPU or CPU model
+than the rest are a `CHECK FAILED platform` line that names them. Its `environment:` and `telemetry:` lines count the
+node snapshots and the timed jobs sampled; a field of `env.json` on which the nodes differ (the driver, the compiler,
+the packages, the governors, ...), a stored network whose hash fails, and a timed job during which the GPU was slowed by
+a power or thermal limit or ran another process at the start are `WARNING env` and `WARNING telemetry` lines, which
+change no exit status. A second platform that runs the smoke tier at the same commit (`run.sh --platform <other>
+--require-gpu <its GPU> --require-cpu any smoke`) checks the `xcheck` cells against this run with `python -m
 experiments.comparison.proof_digests --compare ../logs/final ../logs/<other>`, and `numbers.py --xcheck-logs
 ../logs/<other>` adds it to `\HwDigestDevices`.
 `numbers_check.txt` keeps the first command's report: its end shows at a glance what is missing.

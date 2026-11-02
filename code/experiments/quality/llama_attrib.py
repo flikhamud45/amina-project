@@ -1,11 +1,12 @@
 """Every intermediate tensor of the integer Llama-family graph against the fp32 checkpoint's: the op-level
-attribution behind the Qwen3 statements of Sec. ``sec:quality`` and of the extended version's discussion (the q/k-norm
-balance it led to; Qwen3-4B's early-block SwiGLU products and its second massive activation, with ``llama_diag.py``).
+attribution behind the Qwen3 statements of Sec. ``sec:quality`` and of the extended version's discussion (the k-norm
+loss that the q/k-norm balance removes; Qwen3-4B's early-block SwiGLU products and its second massive activation, with
+``llama_diag.py``).
 
     python -m experiments.quality.llama_attrib --model Qwen/Qwen3-4B-Base --blocks all --recipe smooth55 \\
         --out attrib_qwen3-4b.jsonl 2> attrib_qwen3-4b.txt
     python -m experiments.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --blocks 0 --prefix none \\
-        --no-qk-balance --recipe smooth55                       # the first block of the graph before the balance
+        --no-qk-balance --recipe smooth55                       # the first block without the balance and prefix
     python -m experiments.quality.llama_attrib --model Qwen/Qwen3-0.6B-Base --smoke --blocks all --threads 2   # laptop
 
 ``llama_diag.py`` says after which block the integer residual stream leaves the checkpoint's; this script says at
@@ -245,8 +246,8 @@ def _linear(x: torch.Tensor, lin) -> torch.Tensor:
 
 def float_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, hq: int, hkv: int, dh: int) -> torch.Tensor:
     """Exact causal grouped-query attention in float64: ``q [B, Tq, hq dh]`` are the queries of the last ``Tq`` of
-    the ``Tk`` positions of ``k, v [B, Tk, hkv dh]`` (``pvi.models.decoder.integer_attention``'s convention); query head ``j``
-    reads key/value head ``j // (hq / hkv)``; scores ``q k / sqrt(dh)`` (HF's ``scaling``)."""
+    the ``Tk`` positions of ``k, v [B, Tk, hkv dh]`` (``pvi.models.decoder.integer_attention``'s convention); query
+    head ``j`` reads key/value head ``j // (hq / hkv)``; scores ``q k / sqrt(dh)`` (HF's ``scaling``)."""
     b, tq, tk = q.shape[0], q.shape[1], k.shape[1]
     qh = q.reshape(b, tq, hq, dh).transpose(1, 2)
     kh = k.reshape(b, tk, hkv, dh).transpose(1, 2).repeat_interleave(hq // hkv, 1)

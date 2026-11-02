@@ -27,13 +27,14 @@ weights, built as ``perf.py --real`` builds it (:mod:`experiments.common.real_ce
 ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
 public prefix), the last block pruned; ``--layers n``: the checkpoint's first ``n`` blocks, the full graph's first
 ``n``.  The commitment of a full OPT graph is planned from the graph's own weight ops (its LM head has a folded bias
-column), any other from the whole model's shapes as its graph has them.  ``build_s`` then includes loading the checkpoint in fp32
-and its calibration.  GPT-2 has no integer builder of a real checkpoint and is refused.
+column), any other from the whole model's shapes as its graph has them.  ``build_s`` then includes loading the
+checkpoint in fp32 and its calibration.  GPT-2 has no integer builder of a real checkpoint and is refused.
 
 Record (one JSON line per ``--amortise`` value, ``"kind": "setup"``): ``real`` (the checkpoint; None for random
-weights), ``recipe`` (``certified`` or ``main``; None for random weights), ``prob_max``, ``commit_s``, ``prove_s`` /
-``verify_s`` (median and ``[min, max]``), ``prove_s_all`` / ``verify_s_all`` (every timed repetition), ``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree,
-the per-query column bytes under the honest and the untrusted bound, peak host (Linux) and GPU memory, and ``env``.
+weights), ``recipe`` (``certified`` or ``main``; None for random weights), ``prob_max``, ``build_s``, ``commit_s``,
+``prove_s`` / ``verify_s`` (median and ``[min, max]``), ``prove_s_all`` / ``verify_s_all`` (every timed repetition),
+``proof_bytes`` (``SetupProof.nbytes``), ``s``, ``t0`` and ``t`` per tree, the per-query column bytes under the honest
+and the untrusted bound, peak host (Linux) and GPU memory, and ``env``.
 The exit status is 1 if a verification rejected.  Hardware and time: a GPU for the committer; the package gives GPT-2
 a job limit of one hour and Llama-2-7B one of three hours with 128 GB of host memory.  With ``--real`` the checkpoint
 is held in fp32 until the graph is built (about 4 bytes per parameter: 27 GB for Llama-2-7B, 52 GB for Llama-2-13B),

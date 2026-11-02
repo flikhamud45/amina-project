@@ -49,7 +49,7 @@
 #              (experiments/comparison/zkllm/run_zkllm.sh); only with --llama-licence; its records go to
 #              logs/<name>/zkllm/
 #     gate     [not in 'all'] the full-size checks, run once on the final platform before the run (after the smoke;
-#              about an hour; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
+#              about 1.5 to 3 hours; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
 #              verifiers and the GPU verifier (two Llama-2-7B blocks at 2,048 tokens), OPT-1.3B at 2,048 tokens
 #              (instances of exactly 2^27 leaves), the certified OPT-125M at 2,048 tokens (real weights), one V1
 #              query of the full Llama-2-7B at 2,048 tokens (the run's largest) and the long tier's 16,384 tokens,
@@ -113,18 +113,18 @@
 #     --llama-licence   the Llama-2 cells (real, qllama, zkllm) and the real Llama-2 weights of every cost cell: only
 #                       with your own Llama-2 licence and Hugging Face token (HF_TOKEN); the rehearsal's Llama-2 jobs
 #                       read the gated repository from a compute node
-#     --random-weights  every cost cell on random weights of its model's shapes, as before the real checkpoints were
-#                       the default (the real tier's real-weight cells excepted).  By default a cost cell of
-#                       Llama-2-7B and Llama-2-13B (with --llama-licence), OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B
-#                       takes the model's Hugging Face checkpoint (--real; experiments/common/real_cells.py) wherever
-#                       its prompt, the generated tokens and a Llama-family recipe's fixed prefix fit the checkpoint's
-#                       trained context: Llama-2 cells up to 2,048 tokens.  GPT-2, the image models, the 4,096-token
-#                       cells and the whole long-prompt curve (the long tier, the GPU verifier's long cells, V1's codec
-#                       curve) keep random weights, each curve on one kind of weights; the real tier keeps its
-#                       real-against-random twins; a re-execution job measures its 2-block rows on random weights and
-#                       its full model on the checkpoint (reexec.py --real builds the full model only); the 8- against
-#                       11-bit A/B stays random (a checkpoint's recipe fixes the scale).  The rehearsal makes only
-#                       OPT-125M's cells real (and llama.cpp's Llama-2 conversion with --llama-licence)
+#     --random-weights  every cost cell on random weights of its model's shapes (the real tier's real-weight cells
+#                       excepted).  By default a cost cell of Llama-2-7B and Llama-2-13B (with --llama-licence),
+#                       OPT-125M, OPT-1.3B, OPT-6.7B and Qwen3-4B takes the model's Hugging Face checkpoint (--real;
+#                       experiments/common/real_cells.py) wherever its prompt, the generated tokens and a Llama-family
+#                       recipe's fixed prefix fit the checkpoint's trained context: Llama-2 cells up to 2,048 tokens.
+#                       GPT-2, the image models, the 4,096-token cells and the whole long-prompt curve (the long tier,
+#                       the GPU verifier's long cells, V1's codec curve) keep random weights, each curve on one kind of
+#                       weights; the real tier keeps its real-against-random twins; a re-execution job measures its
+#                       2-block rows on random weights and its full model on the checkpoint (reexec.py --real builds the
+#                       full model only); the 8- against 11-bit A/B stays random (a checkpoint's recipe fixes the
+#                       scale).  The rehearsal makes only OPT-125M's cells real (and llama.cpp's Llama-2 conversion with
+#                       --llama-licence)
 #     --no-bigmem       the long tier leaves out the full Llama-2-7B at 8,192 tokens, whose verifier and
 #                       re-execution check the per-block extrapolation (they need a node with >= 256 GB)
 #     --zkllm-home DIR  the zkllm tier's zkLLM: DIR/zkllm (a checkout at commit 993311e, built for the GPU, with the
@@ -149,22 +149,21 @@
 #                       interactive) for both models at the lengths other than 2,048 (the 2,048-token cells are its
 #                       own)
 # The scheduler's settings come from sbatch's own environment variables (SBATCH_PARTITION, SBATCH_GRES=gpu:<type>:1
-# unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv tier's
-# llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
+# unless --gres, SBATCH_ACCOUNT), the host's from CXX (the native CPU kernels; required) and CMAKE (CMake for the cpuv
+# tier's llama.cpp build; default: cmake on the PATH), passed to the jobs as they are, and from PVI_NATIVE_DIR,
 # PVI_PY_INCLUDE, HF_HOME (every tier but smoke and long downloads checkpoints or datasets: OPT-125M, OPT-1.3B and
 # OPT-6.7B about 16 GB, Qwen3-4B 8 GB, Llama-2-7B and Llama-2-13B 40 GB with --llama-licence, WikiText-2) and
-# PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute path (a relative one is taken from the repository root).
-# HF_TOKEN (the Llama-2 cells) reaches the jobs through sbatch's environment and is never written into a job.
-# Everything is checked before the first job is submitted: the compiler, CMake and git (the cpuv tier; git only while
-# llama.cpp's clone is missing), the
-# interpreter (and, for the qllama tier without --llama-licence, its sentencepiece and protobuf, which OpenLLaMA-7B's
-# tokenizer needs), HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is
-# unwritable), the image models and datasets of the bench tier and, under SLURM, that the partition has a node with
-# the memory the largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and
-# --dependency=singleton.  A job of the same name and platform that is still queued or running is not submitted again,
-# and the chain and the smoke gate pass through it, so running a tier again submits only what is missing; bench.py
-# itself skips a finished benchmark cell.
-# experiments/package/README.md is the runner's guide.
+# PVI_CIFAR_ROOT, PVI_IMAGENET_ROOT and PVI_CACHE (the image models' datasets), each passed to the jobs as an absolute
+# path (a relative one is taken from the repository root).  HF_TOKEN (the Llama-2 cells) reaches the jobs through
+# sbatch's environment and is never written into a job. Everything is checked before the first job is submitted: the
+# compiler, CMake and git (the cpuv tier; git only while llama.cpp's clone is missing), the interpreter (and, for the
+# qllama and qcheck tiers without --llama-licence, its sentencepiece and protobuf, which OpenLLaMA-7B's tokenizer
+# needs), HF_HOME (and that no HF_HUB_CACHE, TRANSFORMERS_CACHE or HF_DATASETS_CACHE that overrides it is unwritable),
+# the image models and datasets of the bench tier and, under SLURM, that the partition has a node with the memory the
+# largest job asks for.  Jobs are named sp-<cell>, with this platform as their --comment and --dependency=singleton.  A
+# job of the same name and platform that is still queued or running is not submitted again, and the chain and the smoke
+# gate pass through it, so running a tier again submits only what is missing; bench.py itself skips a finished benchmark
+# cell. experiments/package/README.md is the runner's guide.
 set -euo pipefail
 
 usage() { sed -n '2,/^[^#]/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
@@ -1479,8 +1478,9 @@ exists)")
   done
   [ -x "$PY" ] || bad+=("$PY is not an interpreter (--python <path>)")
   # OpenLLaMA-7B ships only its SentencePiece model: its tokenizer (the qllama tier's q-openllama7 jobs and their
-  # rehearsal cell, and the qcheck tier's q-openllama7-draws, without --llama-licence) needs sentencepiece, and protobuf for the conversion to the fast
-  # tokenizer; Llama-2's repositories ship the fast tokenizer (tokenizer.json) and need neither
+  # rehearsal cell, and the qcheck tier's q-openllama7-draws, without --llama-licence) needs sentencepiece, and
+  # protobuf for the conversion to the fast tokenizer; Llama-2's repositories ship the fast tokenizer (tokenizer.json)
+  # and need neither
   if [ -n "$spm" ] && [ -x "$PY" ] && ! "$PY" -c "import sentencepiece, google.protobuf" > /dev/null 2>&1; then
     bad+=("$PY cannot import sentencepiece and google.protobuf, which the qllama and qcheck tiers' OpenLLaMA-7B \
 tokenizer needs: $PY -m pip install -r code/requirements-llm.txt")

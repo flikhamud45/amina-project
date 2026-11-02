@@ -108,7 +108,7 @@ def test_field_matmul(r, n, m, transposed):
     assert torch.equal(native_kernels.field_matmul(chi, zz), want)
     zz = zz.clone() if not transposed else zz
     bad = zz.contiguous()
-    bad.view(-1)[-1] = 1 << 31                                            # out of range: the caller's products
+    bad.view(-1)[-1] = 1 << 31                                            # out of range: None (the caller falls back)
     assert native_kernels.field_matmul(chi, bad) is None
     chi[-1, -1] = P
     assert native_kernels.field_matmul(chi, zz) is None

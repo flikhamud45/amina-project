@@ -37,8 +37,8 @@ def test_prompt_crossover_is_where_the_proof_reaches_the_weights():
 def test_the_stored_inputs_give_the_papers_crossovers():
     """Llama-2-7B under Fiat--Shamir and the plan cnn18c (Sec. sec:discussion, fig:breakeven, ext:disc-real): about 22
     64-token queries; one query at 2,048 tokens, or 2.3 with V1; links of 0.42-0.59 Gb/s against exact
-    re-execution, the integer forward pass (V1: 0.23); V1's client
-    faster than v0's below about 1.1 Gb/s; one proof as large as the weights at about 2,100 tokens."""
+    re-execution, the integer forward pass (V1: 0.23); V1's client faster than v0's below about 1.1 Gb/s; one proof
+    as large as the weights at about 2,100 tokens."""
     out = ev.crossovers(json.loads(ev.INPUTS.read_text(encoding="utf-8")), ["cnn18c"])
     q = {(r["seq"], r["protocol"]): r["Q_star"] for r in out["panel1"] if r["fs"]}
     assert q[64, "v0"] == pytest.approx(22.3, abs=0.05)

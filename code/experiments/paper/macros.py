@@ -2,7 +2,7 @@
 tables.
 
 ``numbers.tex`` defines each macro with ``\\newcommand``; the paper writes ``\\Name{}`` where the number stands, and
-``paper_sp2027/fallback/numbers.tex`` holds the values the paper prints today.  A macro whose number the run does not
+``paper_sp2027/fallback/numbers.tex`` holds the values the paper prints before the final run.  A macro whose number the run does not
 provide is written as a visible ``\\todo`` and listed as missing.  The ``Todo...`` macros carry the ``\\todo`` markers
 of numbers that the final run fills: their fallback is the marker, their generated value is empty.
 
@@ -30,8 +30,8 @@ The families, with the record each number comes from:
 * the cost of the defence, batches against one opening, V1 (with its verifier's tensors on the GPU, the gpuv tier),
   serving, the comparison with published systems (and with zkLLM's prover on the run's GPU model, from the run's
   ``zkllm`` tier or else its stored runs, ``ZkllmSameGpu...``), re-execution, real weights, long prompts, the
-  improvements (with the A/B of 8- against 11-bit attention probabilities, :data:`PROB_BITS`), generation (their tiers' records, through the table selections
-  of :mod:`experiments.paper.tables`);
+  improvements (with the A/B of 8- against 11-bit attention probabilities, :data:`PROB_BITS`), generation (their
+  tiers' records, through the table selections of :mod:`experiments.paper.tables`);
 * the break-even (``deployment/ev_breakeven.py``'s formulas on the run's claims, verifier and re-execution times);
 * quality and zero-shot accuracy, the attribution of OPT-125M's perplexity and the reproducible build (``quality``
   tier; two builds of one certified model that differ are a ``CHECK FAILED`` line, :func:`digest_agreement`), the
@@ -157,6 +157,15 @@ def ceil_sci(v: float, digits: int = 2) -> str:
     return f"${mant:.{digits - 1}f}\\cdot10^{{{exp}}}$"
 
 
+def signed_pct_range(p) -> str:
+    r"""A ``(lo, hi)`` pair of fractions as a percentage range with true minus signs: ``$-3$ to $+23$`` when it
+    spans zero, ``3--23`` otherwise (the text writes ``\%``); a range that spans zero is printed with ``to``."""
+    lo, hi = (round(100 * x) for x in p)
+    if lo >= 0:
+        return f.rng(lo, hi, lambda v: f"{v:.0f}")
+    return f"${lo:+d}$" if lo == hi else f"${lo:+d}$ to ${hi:+d}$"
+
+
 def _range(c: Collector, name: str, vals, src, fmt) -> None:
     """A ``lo--hi`` macro over ``vals`` (None if any is missing)."""
     ok = None if not vals or any(v is None for v in vals) else (min(vals), max(vals))
@@ -199,6 +208,8 @@ def platform(c: Collector, ctx: T.Ctx) -> None:
 
 # ================================================================================================ the CPU client
 def cpu_client(c: Collector, ctx: T.Ctx) -> None:
+    """The CPU client of Llama-2-7B (the cpuv tier, 64 and 2,048 tokens): ``CpuRatioN`` and the other ratios of the
+    Kpre CPU verifier against exact and inexact re-execution and llama.cpp, their times, and GPU re-execution."""
     run, m = ctx.run, "llama2-7b"
     k = {s: run.perf("cpuv", m, s, "Kpre", vdev="cpu", label="cpuv") for s in (64, 2048)}
     rx = {s: T.fastest(run, "cpuv", m, s) for s in (64, 2048)}
@@ -504,6 +515,8 @@ TREE_CHUNK = 1 << 22
 
 
 def defence_cost(c: Collector, ctx: T.Ctx) -> None:
+    """The cost of the defence (the bench tier): the image models' ranges, and Llama-2-7B's and OPT-6.7B's proofs,
+    verifiers and weights under mode C."""
     b = ctx.bench
     costs, ratios = [], []
     for m in CNN_MODELS:
@@ -582,6 +595,8 @@ def batching(c: Collector, ctx: T.Ctx) -> None:
 
 # ================================================================================================ serving
 def serving(c: Collector, ctx: T.Ctx) -> None:
+    """The serving harness (the serve tier, ``serve_ab.py``): the prover against unverified serving (``u1``: the same
+    integer model without proofs, ``u2``: an fp16 decoder) in time, energy and proof bytes per token."""
     run = ctx.run
     r = {mode: run.serve("opt-1.3b", 2048, 1, mode, "seq") for mode in ("Kpre", "C")}
 
@@ -625,6 +640,8 @@ def serving(c: Collector, ctx: T.Ctx) -> None:
 
 # ================================================================================================ V1
 def v1_numbers(c: Collector, ctx: T.Ctx) -> None:
+    """V1 against v0 (the v1, real, cpuv and gpuv tiers): proof ratios, exceptions, timings, crossovers in link
+    speed, and V1's cut of the largest model from its shapes."""
     run = ctx.run
     cell = lambda m, s, mode: T.v1_cell(run, m, s, mode)     # noqa: E731
     ratio = lambda r: r and r.d["v0_total"] / r.d["v1_total"]   # noqa: E731
@@ -975,6 +992,8 @@ def prob_scale_claims(run: Run) -> list[str]:
 
 
 def improvements(c: Collector, ctx: T.Ctx) -> None:
+    """The implementation improvements (the improve tier's A/B records, ``tab:eval-improve``) and the A/B of 8- against
+    11-bit attention probabilities (:data:`PROB_BITS`)."""
     run = ctx.run
     gain = lambda kind, m, layers: (lambda p: p[0] / p[1] if p[0] and p[1] else None)(   # noqa: E731
         T.improve_pair(run, kind, m, layers))
@@ -1034,6 +1053,8 @@ def real_query_spread(run) -> tuple[float | None, int | None]:
 
 
 def real_weights(c: Collector, ctx: T.Ctx) -> None:
+    """Real weights against their random-weight twins (the real tier): OPT-1.3B's V1 cells, and the full Llama-2-7B
+    and OPT-6.7B in mode Kpre at 2,048 tokens."""
     run = ctx.run
     prove, verify, smaller = [], [], []
     for mode in ("C", "Kpre"):
@@ -1132,6 +1153,8 @@ def accepted_clause(names: list) -> str:
 
 # ================================================================================================ long prompts
 def long_prompts(c: Collector, ctx: T.Ctx) -> None:
+    """The long prompts (``tab:eval-long``, ``tab:eval-long-check``, ``tab:eval-long-gpu``): the fit's residual, the
+    16,384-token point and the fit's errors against the full model measured (each a bound, rounded up)."""
     pts = {s: T.long_point(ctx.run, s) for s in T.LONG}
     fit = [(s, p["verify_block"]) for s, p in pts.items() if s <= 8192 and p.get("verify_block")]
     resid = None
@@ -1452,6 +1475,8 @@ def draw_spreads(c: Collector, run) -> None:
 
 
 def quality(c: Collector, ctx: T.Ctx) -> None:
+    """Quality (the quality tier): the OPT models' perplexity ratios, the recipes' alpha and calibration studies, the
+    Llama-family ratios and grids, the reproducible build and the zero-shot accuracy."""
     run = ctx.run
     first = run.ppl("facebook/opt-125m", "fp32")
     c.put("QualityWindows", first and first.d.get("windows"), first, f.num)
@@ -1466,13 +1491,15 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
         c.put(f"QualityScalar{name}", sc and sc.d["ratio"], sc, lambda v: f"{v:.2f}")
         c.put(f"QualityScalarExcess{name}", sc and sc.d["ratio"] - 1, sc, f.pct)
         ci = ce and ce.d.get("ratio_ci95")
+        # the ratio's 95% interval as the perplexity increase in percent: 7.3--7.9
         c.put(f"QualityCI{name}", ci, ce, lambda v: f"{v[0]:.3f}, {v[1]:.3f}")
         for cell11 in (T.scalar_cell(gain), T.CERTIFIED_CELL):
             a, b11 = run.ppl(model, cell11.replace("-p11", "-p8")), run.ppl(model, cell11)
             cost.append(a.d["ppl"] / b11.d["ppl"] - 1 if a and b11 else None)
             p8.append(a and a.d.get("mass_min"))
         p11.append(ce and ce.d.get("mass_min"))
-    _range(c, "QualityProbCost", cost, "quality tier, the -p8 against the -p11 cells", f.pct)
+    c.put("QualityProbCost", None if not cost or None in cost else (min(cost), max(cost)),
+          "quality tier, the -p8 against the -p11 cells", signed_pct_range)
     c.put("QualityMassMinEight", None if None in p8 else min(p8), "quality tier, -p8 cells", f.pct)
     c.put("QualityMassMinEleven", None if None in p11 else min(p11), "quality tier, certified cells",
           lambda v: f.pct(v, 1))
@@ -1501,7 +1528,7 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
     rs = {a: run.ppl("facebook/opt-6.7b", f"smooth-certified-a{a:g}-p11", split="validation") for a in (0.5, 0.6)}
     c.put("QualityAlphaCostOptL", rs[0.6].d["ratio"] - rs[0.5].d["ratio"] if all(rs.values()) else None, rs[0.6],
           lambda v: f"{v:.3f}")
-    # the first recipe at 128 tokens (q-opt125-128): its range over alpha 0.55 and 0.5, as the text states it
+    # the legacy recipe at 128 tokens (q-opt125-128): its range over alpha 0.55 and 0.5, as the text states it
     small = [run.ppl("facebook/opt-125m", f"smooth-legacy-a{a}-p8", calibration="test-end", seq=128)
              for a in ("0.55", "0.5")]
     sr = [r.d["ratio"] for r in small if r]
@@ -1525,7 +1552,8 @@ def quality(c: Collector, ctx: T.Ctx) -> None:
         c.put(f"{name}Ratio", r and r.d["ratio"], r,
               (lambda v, dec=dec: ceil_fixed(v, dec)) if bound else (lambda v, dec=dec: f"{v:.{dec}f}"))
         if name in LLAMA_CI:
-            c.put(f"{name}CI", r and r.d.get("ratio_ci95"), r, lambda v, dec=dec: f"{v[0]:.{dec}f}, {v[1]:.{dec}f}")
+            c.put(f"{name}CI", r and r.d.get("ratio_ci95"), r,
+                  lambda v, dec=dec: f"{v[0]:.{dec}f}, {v[1]:.{dec}f}")
         stated = LLAMA_REFERENCE.get(model, "float32")
         c.claim(r is None or r.d.get("ref_dtype", "float32") == stated,
                 f"{name}Ratio's reference is {r and r.d.get('ref_dtype')}; the text states {stated}")
@@ -1628,6 +1656,7 @@ def attribution_claims(ctx: T.Ctx) -> list[str]:
 
 # ================================================================================================ the sampler
 def sampler(c: Collector, ctx: T.Ctx) -> None:
+    """The integer sampler's total-variation distance to the model's distribution (the tv tier, OPT-1.3B)."""
     doc = ctx.run.file("sampler_tv_opt-1.3b.json")
     summary = (doc.d.get("summary") or []) if doc else []
 
@@ -1655,6 +1684,8 @@ def _paths(p, lam=40):
 
 
 def attack(c: Collector, ctx: T.Ctx) -> None:
+    """The attack (the attack tier's documents and the bench tier's image-model cells): the attack on OPT-6.7B, the
+    MNIST studies, the paths the path protocol needs, and the in-range edits (:func:`inrange`)."""
     run, b = ctx.run, ctx.bench
     opt = run.file("real_llm_attack.json")
     auto = run.file("real_llm_attack_auto.json")
@@ -1886,6 +1917,7 @@ def hardware_digests(c: Collector, ctx: T.Ctx) -> None:
 
 
 def setup_and_params(c: Collector, ctx: T.Ctx) -> None:
+    """The setup tier's timed setup proofs, V1's counts of ``tab:params`` and the GKR transcript's size."""
     run = ctx.run
     for model, name in (("llama2-7b", "Llama"), ("gpt2", "Gpt")):
         r = run.setup(model, 100)

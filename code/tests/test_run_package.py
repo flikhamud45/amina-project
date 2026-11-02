@@ -14,9 +14,8 @@
   every tier submits jobs, the cells behind the text's generation, recipe and quality numbers are there (no quality
   cell measured twice where one job suffices), and the rehearsal submits small cells only, which run every script of
   every tier on the paths the full cells take (Llama-2-7B's grid path, or OpenLLaMA-7B's tokenizer without
-  --llama-licence); every CPU-timing
-  cell requires the native kernels and is pinned to one NUMA node, and the dry run lists every job even on a host
-  without the run's settings; every cost cell builds its decoders at the default 11-bit attention probabilities but
+  --llama-licence); every CPU-timing cell requires the native kernels and is pinned to one NUMA node, and the dry
+  run lists every job even on a host without the run's settings; every cost cell builds its decoders at the default 11-bit attention probabilities but
   the improve tier's A/B of 8 against 11 bits (in the full run and the rehearsal); Llama-2-7B's CPU-verifier cells
   measure the client's own memory; the gate tier (the full-size checks before the run) is not in 'all', is refused
   with --rehearsal, and its V1 cells reach GKR instances of 2^lmax leaves (exactly 2^lmax on OPT-1.3B), its long cells
@@ -937,8 +936,8 @@ def test_the_cost_cells_take_the_real_checkpoints_by_one_rule():
     the full run (the real tier's twins and the smoke's cross-check aside) passes ``--real <checkpoint>`` exactly where
     the Python rule names a checkpoint for its model, its longest prompt with the generated tokens, the licence and
     the long-prompt curves; the 2-block re-execution rows and the 8- against 11-bit A/B, which their scripts refuse
-    with --real, stay random.  Without --llama-licence the Llama-2 cells are random, and --random-weights gives the
-    previous run, every cost cell random."""
+    with --real, stay random.  Without --llama-licence the Llama-2 cells are random, and with --random-weights every
+    cost cell is random."""
     from experiments.common.real_cells import LONG_CURVE, main_checkpoint
     from pvi.models.decoder import CONFIGS
     for flags, licence in (((), True), (("--random-weights",), None)):

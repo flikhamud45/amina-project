@@ -9,20 +9,20 @@ and the record's fields name the script that wrote it (:func:`kind_of`).  The at
 model.
 
 The checks (:func:`checks`): an honest query rejected or a tamper accepted (``perf``, ``v1``, ``gen``), an unverified
-response with a non-finite logit or of the wrong length (``decode``), a client
-process whose verdicts differ from the in-process ones (``perf``'s ``client_memory``), a byte accounting that
-disagrees with the model (``v1``), a serving check that failed (``serve``), a setup proof rejected (``setup``), an
-implementation A/B whose two paths disagree (the ``improve`` tier), a zkLLM run whose proof binaries failed or
-whose layers did not all print zkLLM's verifier messages (``zkllm``), a llama.cpp record not marked inexact and a
-different model or not run on its threads (``llamacpp``), a cpux cell that ran on fewer CPUs than its threads, an
+response with a non-finite logit or of the wrong length (``decode``), a client process whose verdicts differ from the
+in-process ones (``perf``'s ``client_memory``), a byte accounting that disagrees with the model (``v1``), a serving
+check that failed (``serve``), a setup proof rejected (``setup``), an implementation A/B whose two paths disagree (the
+``improve`` tier), a zkLLM run whose proof binaries failed or whose layers did not all print zkLLM's verifier messages
+(``zkllm``), a llama.cpp record not marked inexact and a different model or not run on its threads (``llamacpp``), a
+CPU timing of the paper without the native kernels, a cpux cell that ran on fewer CPUs than its threads, an
 attribution study whose float copy failed a check (``attribution``), a cell whose proofs or commitments differ between
 the GPU and the CPU (``digests``), and the smoke's own verdicts (no ``SMOKE OK``, int8 GEMMs that are not exact, a test
-of its pytest run that failed: the ``tests`` record of its summary line) or a ``FAILED`` line
-of a script in a job's log; between two jobs (:func:`cross_checks`), the attribution's integer graph against the
-quality tier's cell of the same graph.  Each job's GPU, CPU, driver and node come from the node line at the start of
-its log (:func:`nodes`) and its records' environments (:func:`machines`).  Each is reported as a ``CHECK FAILED`` line; a line that starts with ``{`` and
-does not parse, or parses as no known kind, is a ``PARSE`` line.  Either makes ``paper/numbers.py`` exit with status
-1.
+of its pytest run that failed: the ``tests`` record of its summary line) or a ``FAILED`` line of a script in a job's
+log (:func:`log_checks`); between two jobs (:func:`cross_checks`), the attribution's integer graph against the quality
+tier's cell of the same graph.  Each failed check is reported as a ``CHECK FAILED`` line; a line that starts with
+``{`` and does not parse, or parses as no known kind, is a ``PARSE`` line.  Either makes ``paper/numbers.py`` exit
+with status 1.  Each job's GPU, CPU, driver and node come from the node line at the start of its log (:func:`nodes`)
+and its records' environments (:func:`machines`).
 """
 from __future__ import annotations
 
@@ -405,8 +405,8 @@ def _node_line(path: Path) -> tuple[dict | None, bool]:
 
 def nodes(logs: Path) -> dict[str, dict]:
     """``{job log name: its node line's fields}`` (``host``, ``gpu``, ``driver``, ``cpu``, ...) of every job log
-    ``sp-*.out`` in ``logs`` that has one (the first; logs of jobs submitted before the line existed have none), but
-    the logs of jobs that stopped at the node check (:func:`stopped_at_node_check`), which ran on no node of the
+    ``sp-*.out`` in ``logs`` that has one (the first such line; a log without one is left out), but the logs of jobs
+    that stopped at the node check (:func:`stopped_at_node_check`), which ran on no node of the
     run."""
     out = {}
     for path in sorted(logs.glob("sp-*.out")):
@@ -458,7 +458,9 @@ def verifier_device(d: dict) -> str:
 
 # ------------------------------------------------------------------------------------------------ selection
 class _Main:
-    """The weights of the paper's main cells (:data:`MAIN`)."""
+    """The weights of the paper's main cells (:data:`MAIN`): a selector's ``real`` that asks for the weights that
+    ``experiments.common.real_cells``'s rule (:func:`~experiments.common.real_cells.main_checkpoint`, ``run.sh``'s
+    ``rw``) gives the record's model, prompt and job (:meth:`Run.weights`)."""
 
     def __repr__(self) -> str:
         return "MAIN"

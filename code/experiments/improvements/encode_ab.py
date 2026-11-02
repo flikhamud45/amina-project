@@ -2,7 +2,8 @@
 against a single-threaded one, and the fused Triton encoder against the torch encoder, on the same claims.
 
 The rows "Threaded assembly of the encoded claims (encoder)" of ``tab:eval-improve`` and the negative result of the
-fused Triton encoder ("1.74 against 1.54 s on OPT-1.3B") in ``sections/ext_evaluation.tex``.
+fused Triton encoder on OPT-1.3B (``\\ImproveFusedEncoder`` against ``\\ImproveThreadedEncoder``) in
+``sections/ext_evaluation.tex``.
 
     python -m experiments.improvements.encode_ab --model opt-1.3b --layers 24 --seq 2048
     python -m experiments.improvements.encode_ab --model llama2-7b --layers 2 --seq 2048 --fused
@@ -29,9 +30,9 @@ query, whose claims every variant encodes.  Refused: shapes without an integer b
 ``--prob-max`` (the recipe fixes the scale) and a ``--seq`` beyond the checkpoint's trained context.
 
 Record (one JSON line per variant): ``model``, ``real`` (the checkpoint; None for random weights), ``recipe``,
-``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, ``encode_s`` (the
+``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.recipe_fields`), ``layers``, ``seq``, ``encode_s`` (the
 median), ``all_s``, ``vs_one_thread``, ``same_bytes``, ``bytes``, ``claims``, ``ops``, ``prob_max`` (the graph's
-attention probabilities' scale), the thread count, the GPU, peak GPU memory and ``env``; with ``--profile``, a
+attention probabilities' scale), the thread count, the GPU, peak GPU memory, ``host`` and ``env``; with ``--profile``, a
 ``torch.profiler`` table of one more threaded call, sorted by CPU and by CUDA time.  Needs a CUDA GPU (the device
 encoder); the full OPT-1.3B at 2,048 tokens gives a proof of about 2 GB.  With ``--real`` the checkpoint is loaded in
 fp32 and calibrated on the CPU first (host memory: its fp32 weights, 5.3 GB for OPT-1.3B and 27 GB for Llama-2-7B,

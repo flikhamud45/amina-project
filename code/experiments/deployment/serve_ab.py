@@ -24,13 +24,14 @@ graph for every cell), on ``--layers`` blocks (0: the full model); the small sha
 one ``--model``, which names its shapes) the integer model is the checkpoint's integer graph instead, built as
 ``perf.py --real`` builds it (:mod:`experiments.common.real_cells`: an OPT checkpoint with
 ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint, Qwen3 included, with ``hf_llama.MAIN_RECIPE`` and its fixed
-public prefix; ``--layers n``: the checkpoint's first ``n`` blocks, the full graph's first ``n``), and the prompts are the WikiText-2 test split's windows from its start (``perf.py --real``'s queries: the
-``B`` prompts of a cell are the first ``B`` windows of ``T`` tokens, so prompt 0 is again the B = 1 prompt).  The
+public prefix; ``--layers n``: the checkpoint's first ``n`` blocks, the full graph's first ``n``), and the prompts are
+the WikiText-2 test split's windows from its start (``perf.py --real``'s queries: the ``B`` prompts of a cell are the
+first ``B`` windows of ``T`` tokens, so prompt 0 is again the B = 1 prompt).  The
 checkpoint is loaded in fp32, calibrated and turned into the integer graph before anything is timed, and its fp32
 model freed.  U2 keeps random weights of the checkpoint's shapes (its dense kernels' time depends on the shapes
 only) and runs no fixed prefix, whose keys and values the real Llama-family graph's attention also reads.  Refused
 with ``--real``: GPT-2 (no integer builder of a real checkpoint), a cell longer than the checkpoint's trained context,
-an OPT model of fewer blocks than the checkpoint's, and an attention probabilities' scale other than the paper's.
+a checkpoint of other shapes than ``--model``'s, and an attention probabilities' scale other than the paper's.
 Every cell times, on the same token ids, shapes, device and host:
 
 * **U1**, our exact integer model served without proofs: ``IntGraph.forward(free=True)`` of the integer graph, every
@@ -74,9 +75,9 @@ designated verifier reads no challenge), ``prove_fold`` (``u``) and ``prove_open
 paths), plus ``challenges``: the prover's derivation of the Fiat--Shamir challenges from the transcript, which
 ``run_query`` books to neither party (:class:`TimedChallenges`).  The in-process run also decodes ``u`` and the
 columns for the verifier (``verify_decode``), which is not the prover's work and is subtracted: ``prove_s`` is the
-measured window minus ``verify_decode``.  ``residual`` is ``prove_s`` minus the sum of the phases (Python, copies; the
-per-phase contention snapshots are off, :func:`pvi.core.contention.paused`), and ``phases_ok`` holds when ``|residual|`` is at
-most ``--residual-max`` (2%) of ``prove_s`` in the median repetition.  The proof-only overhead ``prove_s - U1`` is
+measured window minus ``verify_decode``.  ``residual`` is ``prove_s`` minus the sum of the phases (Python, copies;
+the per-phase contention snapshots are off, :func:`pvi.core.contention.paused`), and ``phases_ok`` holds when
+``|residual|`` is at most ``--residual-max`` (2%) of ``prove_s`` in the median repetition.  The proof-only overhead ``prove_s - U1`` is
 split into ``forward_extra`` (the prover's forward pass(es) minus U1: narrowing and keeping the claims, and with
 ``seq`` B single-prompt passes against one batched pass), ``encode``, ``hash``, ``fold``, ``open``, ``lookups``,
 ``challenges`` and ``residual`` (medians: they add up to the overhead approximately).
@@ -105,17 +106,17 @@ GPU memory of each variant (``gpu_peak_mb``), the largest share of a timed windo
 prover's window and each U2 dtype, ``{"joules", "method", "calls"}`` from NVML's energy counter,
 :mod:`experiments.common.energy`: over at least ``--energy-s`` seconds of back-to-back calls for a call shorter than
 that, untimed and after the repetitions, else the median of the timed repetitions' own differences; None without a
-counter, and the record's ``energy_counter`` says why) and the host's peak resident memory (``host_maxrss_mb``); and one line
-per cell, ``row = "on_request"``: serving costs U1 (``serve_s``, and its ratio to U2), and a proof produced later,
+counter, and the record's ``energy_counter`` says why) and the host's peak resident memory (``host_maxrss_mb``); and
+one line per cell, ``row = "on_request"``: serving costs U1 (``serve_s``, and its ratio to U2), and a proof produced later,
 only for the queries a client asks about, costs ``prove_s`` and is byte-identical (``later_proof``: ``deterministic``,
 with its SHA-256).  Every line carries the run's settings, ``real`` (the checkpoint; None for random weights) and
 ``recipe`` (``certified`` or ``main``; None for random weights), the setup times (``build_s``, ``commit_s``,
 ``setup_cache``, ``precompute_s``; with ``--real`` also ``load_s``, loading the checkpoint in fp32 and its
 calibration, which ``build_s``, the integer graph's own calibration and build, does not include) and ``env``
 (:func:`experiments.common.records.environment`).  A variant that does not fit the GPU is recorded as ``skipped`` (out
-of memory), never extrapolated.  ``--table`` prints such lines as a
-table, and for a (model, T, B) measured on two block counts the two-point extrapolation of U1 and U2 to the full model
-(a consistency check against ``reexec.py``'s extrapolated re-execution; never a reported cell).
+of memory), never extrapolated.  ``--table`` prints such lines as a table, and for a (model, T, B) measured on two
+block counts the two-point extrapolation of U1 and U2 to the full model (a consistency check against ``reexec.py``'s
+extrapolated re-execution; never a reported cell).
 
 Hardware and time: the package runs every table model on an NVIDIA L40S (48 GB) with 8 CPU threads, one job per
 model with limits of 3 hours (OPT-1.3B) to 8 hours (Llama-2-13B) and 128-256 GB of host memory: a joint proof of

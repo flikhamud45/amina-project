@@ -12,25 +12,22 @@
 \@ifundefined{fact}{\newtheorem{fact}{Fact}}{}
 \makeatother
 
-\section{The Defence: Checking Every Weight Operation}
+\section{Checking Every Weight Operation}
 \label{sec:defence}
 
-Theorem~\ref{thm:dich} leaves one way to reach soundness $2^{-\lambda}$ well below the cost of
-re-execution: the verifier must touch every row, through checks that each mix many rows of a weight
-matrix. Our defence applies the evaluation protocol of a linear-code polynomial
-commitment~\cite{ligero,brakedown} to every matrix product: Freivalds'
-algorithm~\cite{freivalds1977} tests random combinations of all neurons of each weight operation,
-and a client without the weights checks each combination against a Reed--Solomon-encoded,
-Merkle-committed copy of them. The commitment's testing phase is amortised into a one-time setup
-proof (Section~\ref{sec:setup-proof}). The provider (prover) may deviate arbitrarily. In mode
-$\sC$ the client (verifier) holds only a commitment $C_M$ to the weights, as in the path
-protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights. In mode $\Kpre$ it needs
-them once, to derive a key~\cite{slalom,commitllm2026} that it stores instead (\KpreStoreGB{}\,GB for
-Llama-2-7B): secret Freivalds vectors with their folded rows (\KpreKeyMB{}\,MB) and the embedding
-tables (\KpreEmbedMB{}\,MB), whose rows it looks up itself. We compare it with re-execution for a
-client that could also keep the weights. For open weights anyone can recompute $C_M$
-(Section~\ref{sec:threat}); in our run, builds of the certified OPT-125M with \DigestThreadsOptS{} threads are
-identical bit for bit, and so are OPT-1.3B's builds and commitments with \DigestEncodingOptM{} encoding.
+By Theorem~\ref{thm:dich}, a verifier that reaches soundness $2^{-\lambda}$ without opening nearly
+every row must use checks that each mix many rows of a weight matrix. Our defence applies the
+evaluation protocol of a linear-code polynomial commitment~\cite{ligero,brakedown} to every matrix
+product: Freivalds' algorithm~\cite{freivalds1977} tests random combinations of all neurons of each
+weight operation, and a client without the weights checks each combination against a
+Reed--Solomon-encoded, Merkle-committed copy of them. In mode $\sC$ the client (verifier) holds
+only a commitment $C_M$ to the weights, as in the path protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights. In mode $\Kpre$
+it needs them once, to derive a key~\cite{slalom,commitllm2026} that it stores instead
+(\KpreStoreGB{}\,GB for Llama-2-7B): secret Freivalds vectors with their folded rows
+(\KpreKeyMB{}\,MB) and the embedding tables (\KpreEmbedMB{}\,MB), whose rows it looks up itself.
+For open weights anyone can recompute $C_M$ (Section~\ref{sec:threat}): in our runs, builds of the
+certified OPT-125M with \DigestThreadsOptS{} threads are identical bit for bit, and so are OPT-1.3B's
+builds and commitments with \DigestEncodingOptM{} encoding.
 
 \subsection{The Exact Integer Model}
 \label{sec:intmodel}
@@ -64,14 +61,13 @@ differ by less than $2^{30}<p$ and remain distinct in $\F$.
 
 At setup, every row of $A_\ell$ is Reed--Solomon encoded~\cite{reedsolomon1960}: the polynomial
 whose coefficients are the row is evaluated at the $n\ge k_\ell$ points of a multiplicative subgroup
-of $\F$ ($n$ a power of two), giving the rows of $\hat A_\ell$. Encoding is linear, so
-$\chi^\T\hat A_\ell=\enc(\chi^\T A_\ell)$, and two distinct codewords agree on at most $k_\ell-1$
-positions. A SHA-256 Merkle tree~\cite{merkle1987} binds the columns of $\hat A_\ell$. $C_M$ holds
-the roots, 32 bytes per tree, and the public encoding parameters.
-
-\para{Commitment plans.} The trees, codeword lengths and layouts (some matrices encode the rows of
-$A_\ell^\T$, the \emph{transposed layout}) form a \emph{plan}, a public function of the model that
-is part of $C_M$.
+of $\F$ ($n$ a power of two), giving the rows of $\hat A_\ell$. Distinct polynomials of degree
+below $k_\ell$ agree on at most $k_\ell-1$ points, so the codewords of two different rows differ
+in at least $n-k_\ell+1$ of the $n$ positions. Encoding is linear, so $\chi^\T\hat A_\ell=\enc(\chi^\T
+A_\ell)$. A SHA-256 Merkle tree~\cite{merkle1987} binds the columns of $\hat A_\ell$; one column
+holds one symbol of every row's codeword. $C_M$ holds the roots, 32 bytes per tree, and the
+\emph{plan}, a public function of the model: the trees, codeword lengths and layouts (some matrices
+encode the rows of $A_\ell^\T$, the \emph{transposed layout}).
 
 \subsection{The Protocol}
 \label{sec:protocol}
@@ -146,16 +142,15 @@ view does not depend on $\chi_\ell$ (Appendix~\ref{app:sound}). \qed
 \para{Parameters.} We set $\beta=\lambda+\log_2(2n_{\mathrm{op}})$, with $n_{\mathrm{op}}\ge|\mathcal J|$
 the number of weight operations, and $r=\lceil\beta/\log_2p\rceil$, and each tree of the plan opens the least
 $t$ that keeps every member's column term below $2^{-\beta}$. Then
-$\varepsilon_{\sC}\le2^{-\lambda}$; at $\lambda=128$, $r=5$ (Appendix~\ref{app:defence} lists all
-parameters for Llama-2-7B). Each folded row and column mixes all rows of its matrix, so the protocol
-attains the upper bound of Theorem~\ref{thm:dich} with $O(\lambda)$ field elements per row instead
-of $k_\ell$ weights.
+$\varepsilon_{\sC}\le2^{-\lambda}$; at $\lambda=128$, $r=5$ (Table~\ref{tab:params} lists all
+parameters for Llama-2-7B). Each folded row and opened column mixes all rows, so the protocol attains
+Theorem~\ref{thm:dich}(b) with $O(\lambda)$ field elements per row instead of its $k_\ell$ weights.
 
 \subsection{Non-Interactive Proofs}
 \label{sec:fs}
 
-Each challenge is expanded with SHAKE-256~\cite{fips202} from a 256-bit key that the verifier
-draws interactively and that Fiat--Shamir~\cite{fiatshamir1986} derives from a transcript.
+Each challenge is expanded with SHAKE-256~\cite{fips202} from a 256-bit key, which the verifier
+draws interactively and Fiat--Shamir~\cite{fiatshamir1986} derives from a hash of the transcript.
 
 \para{The statement binds the computation.} Challenges that do not depend on the whole statement
 make one transcript valid for several statements, the weak Fiat--Shamir
@@ -175,30 +170,34 @@ $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$~\cite{canetti2019fs,holmgren2019rbr
 round-by-round error $\varepsilon_{\mathrm{rbr}}$ is the largest of these probabilities, not their
 sum, and so at most $\varepsilon_{\sC}$ (Appendix~\ref{app:sound}). For simplicity our parameters
 keep the union bound: we add 64 bits to $\beta$, which keeps $Q\varepsilon_{\sC}\le2^{-\lambda}$
-for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$. Meeting $Q\varepsilon_{\mathrm{rbr}}\le
-2^{-\lambda}$ alone would save the $\log_2(2n_{\mathrm{op}})$ bits of the union bound in $\beta$ and
-leave $r=7$.
+for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$; bounding $Q\varepsilon_{\mathrm{rbr}}$ alone
+would still need $r=7$.
 
 \subsection{Untrusted Commitments}
 \label{sec:setup-proof}
 
-Theorem~\ref{thm:sound} assumes an honest $C_M$. A Merkle root can bind any matrix $E_j$, not only a matrix of codewords, which is why
-linear-code polynomial commitments pair each evaluation with a testing phase~\cite{ligero,brakedown}:
-a committer can bind the encoded columns of two models that differ in matrix $j$ on complementary
-halves of the positions of $j$'s tree, and a prover that computes with the second passes the
-column check with probability $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-\ParamsColumnsMinInt{}}$ per query
-($2^{-\ParamsColumnsMinFs{}}$ under Fiat--Shamir) for the tree of Llama-2-7B with the fewest columns. When nobody the client trusts can recompute $C_M$, the
-committer therefore publishes once per model a non-interactive \emph{setup proof} that each $E_j$
-differs from a codeword matrix $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns. It opens
-$t^0_j$ columns of each tree, and the verifier then accepts only outputs of the model with weights
-$A^*$, except with the error of Theorem~\ref{thm:sound} with $k_j+e_j$ in place of $k_j$
-(Theorem~\ref{thm:untrusted}, Appendix~\ref{app:untrusted}); without the weights or a range proof,
-the client learns only that the provider is bound to this one model. For Llama-2-7B at $\lambda=128$ the
-setup proof is \SetupGBLlamaA{}\,GB with radii chosen for $a=100$ amortised queries, or \SetupGBLlamaB{}\,GB for
-$a=1{,}000$, and the opened columns per interactive query grow from \SetupHonestMBLlama{} to \SetupUntrustedMBLlamaA{} or \SetupUntrustedMBLlamaB{}\,MB, less than
-\SetupQueryShareLlamaA{}\% of the proof at 2{,}048 tokens. Proving it takes \SetupProverLlama{} on the
-\PlatformGpu{} and verifying it \SetupVerifierLlama{} on 8 threads of the \PlatformCpu{}. For column-hash commitments these
-setup columns are forced: with fewer than $t^0_j$ columns of $j$'s tree, no complete test that sees
-only columns certifies radius $e_j$ at our error (proof in the extended version~\cite{fullversion}). FRI-, STIR-, WHIR- or
-BaseFold-style tests~\cite{fri2018,stir,whir,basefold} could shrink only the combined rows, \SetupCombinedShareLlamaA{}\%
-of the setup proof at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$.
+Theorem~\ref{thm:sound} assumes an honest $C_M$. A Merkle root can bind any matrix $E_j$, not only
+a matrix of codewords, which is why linear-code polynomial commitments pair each evaluation with a
+testing phase~\cite{ligero,brakedown}. Without it, a committer can bind the encoded columns of two
+models that differ in matrix $j$ on complementary halves of the positions of $j$'s tree; a prover
+that computes with the second passes the column check with probability
+$\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-\ParamsColumnsMinInt{}}$ per query
+($2^{-\ParamsColumnsMinFs{}}$ under Fiat--Shamir) for the tree of Llama-2-7B with the fewest
+columns. When nobody the client trusts can recompute $C_M$, the committer therefore publishes, once
+per model, a non-interactive \emph{setup proof}: it opens $t^0_j$ columns of each tree and shows
+that each $E_j$ differs from a codeword matrix $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$
+columns. The verifier then accepts only outputs of the model with weights $A^*$, except with the
+error of Theorem~\ref{thm:sound} with $k_j+e_j$ in place of $k_j$ (Theorem~\ref{thm:untrusted},
+Appendix~\ref{app:untrusted}); without the weights or a range proof, the client learns only that
+the provider is bound to this one model. For Llama-2-7B at $\lambda=128$, with radii chosen for
+$a=100$ or $1{,}000$ amortised queries, the setup proof is \SetupGBLlamaA{} or \SetupGBLlamaB{}\,GB,
+and the columns opened per interactive query grow from \SetupHonestMBLlama{} to
+\SetupUntrustedMBLlamaA{} or \SetupUntrustedMBLlamaB{}\,MB, adding at most
+\SetupQueryShareLlamaA{}\% to the proof at 2{,}048 tokens. The setup proof takes \SetupProverLlama{}
+to prove on the \PlatformGpu{} and \SetupVerifierLlama{} to verify on 8 threads of the
+\PlatformCpu{}. For column-hash commitments these setup columns are forced: with fewer than $t^0_j$
+columns of $j$'s tree, no complete test that sees only columns certifies radius $e_j$ with
+error $2^{-\beta}$ (proof in the extended version~\cite{fullversion}). Tests in the style of FRI, STIR, WHIR
+or BaseFold~\cite{fri2018,stir,whir,basefold} could shrink only the random row combinations the setup
+proof sends, at most \SetupCombinedShareLlamaA{}\% of it at $a=100$ and \SetupCombinedShareLlamaB{}\% at
+$a=1{,}000$.

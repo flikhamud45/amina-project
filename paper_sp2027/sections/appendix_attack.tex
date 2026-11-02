@@ -30,7 +30,7 @@ activation, up to rounding. If the trace stores pre-activations, edit $z_u$ inst
 \begin{lemma}[no touch, no rejection]
 \label{lem:notouch}
 In the ideal-oracle model, if a forgery at $u$ is explainable, then every $V\in\mathrm{Spot}_d(q)$
-that does not touch $u$ accepts it.
+accepts it on every run that does not touch $u$.
 \end{lemma}
 \begin{proof}
 Fix the coins. While no query touches $u$, the answers $\gamma_\sigma(\theta_{S_\sigma})$ and
@@ -84,8 +84,10 @@ box~\cite{chew1967,kadane1971}.
 \begin{lemma}[independent rows give (H)]
 \label{lem:product}
 Suppose the prior on $\theta$ given $Z$ is a product $\bigotimes_j\mu_j$, and $A$ depends on the
-target rows only through their values: the law of $A(\theta)$ is a function of $h(\theta)$. Then
-(H) holds with $R_p=\bigotimes_j\mu_j(\,\cdot\mid f_j(\theta_j)=p_j)$.
+target rows only through their values: the law of $A(\theta)$ is a function of $h(\theta)$. Write
+$p_j$ for the claimed value of site $j$ in the view $p$. Then (H) holds with
+$R_p=\bigotimes_j\mu_j(\,\cdot\mid f_j(\theta_j)=p_j)$, where any law may be used for a row $j$ with
+$\Pr_{\mu_j}[f_j(\theta_j)=p_j]=0$; such a $j$ can only be the edited site, given $P=p$.
 \end{lemma}
 \begin{proof}
 Write $\alpha(h,u,v)=\Pr[A(h)=(u,v)]$. On the event $\{P=p,J=u\}$ we have $h_j=p_j$ for all
@@ -137,8 +139,8 @@ coordinate $0$. Then for every $V\in\mathrm{Spot}_d(q)$ that knows the later wei
 ranges and the natural distribution of every hidden neuron,
 $\mathbb E_{\sigma,r}\Pr[V\text{ accepts}]\ge1-qd/N$ in the ideal-oracle model, and
 $\ge1-qd/N-2Q2^{-\kappa}-Q^22^{-\ell_H}$ for an unsalted Merkle tree with $\ell_H$-bit hashes and $Q$
-hash evaluations by $V$. In particular some $(\sigma,r)$ achieves the bound, and a single random
-draw defeats every verifier simultaneously.
+hash evaluations by $V$. In particular, for each such $V$ some $(\sigma,r)$ attains the bound, and
+the law of $(\sigma,r)$ does not depend on $V$.
 \end{proposition}
 \begin{proof}
 On the input $\mathbf 1$ we have $g=1$. On a query whose zero is at $\zeta$, $g=0$, and setting
@@ -147,10 +149,10 @@ $\{0,1\}$, the natural range. The forged trace, the later weights, the ranges an
 neuron's marginal (zero on exactly one of the $N+1$ natural inputs) do not depend on $(\sigma,r)$.
 Replacing row $J$ by $e_j+\sum_l r'_le_{\mathrm{dead},l}$, for some $j\neq\zeta$ and fresh $r'$, gives
 an admissible instance whose honest trace is $\tau'$, so the forgery is explainable. For (H), let
-$R_p$ give each newly touched row a uniform unused element of $[N]\setminus\{\zeta\}$ and fresh $r$.
-Given $J=u$, the other rows form a uniform bijection onto $[N]\setminus\{\zeta\}$ with independent
-$r$, so revealing them one at a time has the law of $R_p$, as long as fewer than $N$ rows have been
-touched, which holds whenever $qd<N$ (otherwise the claim is trivial). $J$ is uniform given the
+$R_p$ give each newly touched row a uniform unused element of $[N]\setminus\{\zeta\}$, or $\zeta$
+once none is left, and fresh $r$. Given $J=u$, the other $N-1$ rows form a uniform bijection onto
+$[N]\setminus\{\zeta\}$ with independent $r$, so revealing them one at a time has the law of $R_p$;
+a run touches only these rows before its first query that touches $u$. $J$ is uniform given the
 view, so Theorem~\ref{thm:guess-full} gives detection at most $qd/N$. For the Merkle tree, apply
 Remark~\ref{rem:merkle}: each leaf preimage, under the true rows and under the explanation, has
 min-entropy at least $\kappa$ given the view and the other leaves.
@@ -338,7 +340,7 @@ reference oracle.
 \begin{proof}
 On a natural input every dead coordinate is $0$, so hidden neuron $i$ has the pre-activation
 $x_{\sigma(i)}\in\{0,1\}$ and the value $x_{\sigma(i)}$. The pre-activation of $g$ is
-$\sum_ih_i-(N-1)\in[-(N-1),1]$; after the clamp to $[-127,1]$ and the ReLU table, $g$ is the value of
+$\sum_ih_i-(N-1)\in[-(N-1),1]$; the clamp maps it into $[-127,1]$, and after the ReLU table $g$ is the value of
 Proposition~\ref{prop:worst}. The second logit $2g\in\{0,2\}$ exceeds the first exactly when $g=1$.
 The forged value $h_J=1$ and the explaining row (weight $1$ on input $j\neq\zeta$ and fresh int8
 dead-input weights) are of the same integer form, so the forgery is explainable within the integer
@@ -478,7 +480,7 @@ tightness and for Proposition~\ref{prop:amp}. A Merkle opening includes an authe
 sibling hashes depend on other rows, so with unsalted leaves and low-entropy rows a verifier can
 brute-force sibling subtrees. On the instance of Proposition~\ref{prop:worst} without the random
 weights, opening one row and inverting the hashes of the sibling subtrees up to height $\eta$ detects
-the edit with probability $2^{\eta+1}/N$ instead of $1/N$ (exact computation for $N=16$: $0.125$,
+the edit with probability $2^{\eta+1}/N$ instead of $1/N$ (for $N=16$: $0.125$,
 $0.25$ and $0.5$ for $\eta=0,1,2$, against $0.0625$). Lemma~\ref{lem:notouch} and
 Theorem~\ref{thm:guess-full} therefore hold in either of two cases. The first is a hiding vector
 commitment, for example Merkle leaves $H(s_i\Vert\theta_i)$ with fresh salts. The second is the
@@ -511,7 +513,8 @@ as proof chunks~\cite{slp} or (layer, token) cells~\cite{commitllm2026}.
 verifier that sees whole traces and caches opened rows checks them for free on later queries, and
 after about $N/q$ queries it has in effect downloaded the layer, which amounts to holding the
 weights. The path protocol opens trace values only along its path, so caching rows does not let it
-check unvisited nodes, and $1-(1-1/N)^k$ stays the bound for $k$ chosen tampered queries.
+check unvisited nodes, and $1-(1-1/N)^k$ stays the detection bound for $k$ tampered queries chosen
+by the provider.
 (v)~\emph{Transformers}: padding embeds the instance of Proposition~\ref{prop:worst} in every ReLU
 MLP with input dimension and a hidden width of at least $N$ and one further hidden layer. In a
 transformer, the LayerNorm before the MLP prevents feeding the 0/1 patterns directly. We do not
@@ -527,14 +530,15 @@ when it enters that layer it picks the neuron uniformly among the $d_{\mathrm{ff
 edited neurons in that layer are detected with probability at most $k/d_{\mathrm{ff}}$ per path, and the edit passes $s$ paths with
 probability at least $(1-k/d_{\mathrm{ff}})^s$. Table~\ref{tab:aligned} gives the resulting number of
 paths needed for detection probability $1-2^{-40}$ on two instruction-tuned models. It follows from
-the formula and the models' shapes, and needs no attack search. We measured $k=1$ for next-token
-changes on OPT-6.7B (Section~\ref{sec:break}). We deliberately do not develop or release a method
-for steering whole responses of aligned assistants: the integrity failure is already characterised
-by the acceptance bound, and such a method would mainly help a dishonest provider.
+the formula and the models' shapes, and needs no attack search. On OPT-6.7B, $k=1$ already changed
+the next token (Section~\ref{sec:break}). We do not develop or release a method for steering whole
+responses of aligned assistants: the acceptance bound already characterises the integrity failure,
+and such a method would mainly help a dishonest provider.
 
 \begin{table}[t]
-  \caption{Paths the path protocol needs to catch $k$ edited neurons of one FFN layer with
-  probability $1-2^{-40}$ (lower bounds, from $(1-k/d_{\mathrm{ff}})^s\le2^{-40}$)}
+  \caption{Even several edited neurons in one FFN layer need tens of thousands of paths per query
+  to be caught with probability $1-2^{-40}$. Lower bounds on the paths, from
+  $(1-k/d_{\mathrm{ff}})^s\le2^{-40}$}
   \label{tab:aligned}
   \footnotesize
   \centering

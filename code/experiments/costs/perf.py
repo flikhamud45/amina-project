@@ -38,10 +38,10 @@ checkpoint's recipe fixes its probabilities' scale (``--prob-max`` is for random
 (:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` its first ``n`` blocks with the same
 calibration and prefix, the full graph's first ``n`` (:mod:`experiments.common.real_cells`; the build's commitment is
 then planned and its ``(r, t)`` sized for the whole model, as a random-weight build's), queried on WikiText-2 windows
-of ``--seq`` tokens.  OPT: the
-certified recipe (``hf_opt.CERTIFIED_RECIPE``) by default, or with ``--recipe legacy`` the percentile recipe (norm gain 4,
-``--smooth``: SmoothQuant through the norm gains, calibrated on one window of ``--calib-seq`` tokens from the end of
-the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its fixed public prefix.  Mode C's plans are
+of ``--seq`` tokens.  OPT: the certified recipe (``hf_opt.CERTIFIED_RECIPE``) by default, or with ``--recipe legacy``
+the percentile recipe (norm gain 4, ``--smooth``: SmoothQuant through the norm gains, calibrated on one window of
+``--calib-seq`` tokens from the end of the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE`` with its
+fixed public prefix.  Mode C's plans are
 made from the graph's own weight ops.  ``--tampers n`` (decoders): after the timed queries every variant runs ``n`` of
 each of the trace-tampering attacks of :func:`experiments.common.tampers.decoder_tampers` on the first query, each of
 which must be rejected.
@@ -58,9 +58,10 @@ proof at a time; the folder is removed when the process ends, also on SIGTERM (a
 Record (one JSON line per mode and variant): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
 ``calib_seq``, ``seq``, ``layers``, ``mode``, ``policy``, ``chosen`` (mode C: the plan committed, ``auto``'s pick),
 ``wire``, ``lean``, ``claims_staged`` (bytes of claims the prover staged in pinned host memory, 0 for none: the
-option ``--host-claims``, :func:`pvi.v0.query.device_claim_budget`), ``lam``, ``rate``, ``prune_last``, ``lookups``, ``prob_max`` (the graph's attention probabilities'
-scale, :func:`pvi.models.decoder.prob_max_of`; None for an image model), ``reps``, ``columns``, ``group_columns``,
-``device``, ``verifier_device``, ``stream``, ``threads``, ``accepted`` / ``queries``, ``fs``, ``prove_s`` and
+option ``--host-claims``, :func:`pvi.v0.query.device_claim_budget`), ``lam``, ``rate``, ``prune_last``, ``lookups``,
+``prob_max`` (the graph's attention probabilities' scale, :func:`pvi.models.decoder.prob_max_of`; None for an image
+model), ``reps``, ``columns``, ``group_columns``, ``device``, ``verifier_device``, ``stream``, ``threads``,
+``accepted`` / ``queries``, ``fs``, ``prove_s`` and
 ``verify_s`` (sums of the per-part medians, Fiat--Shamir hashing counted for both), ``prove_s_range`` /
 ``verify_s_range`` (``[min, max]`` of each query's own totals), ``prove_s_all`` / ``verify_s_all`` and
 ``timings_all`` (every timed query's own totals and parts, in query order), ``transcripts`` (with Fiat--Shamir, each

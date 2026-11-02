@@ -13,7 +13,8 @@ between its exact integer form and float.
 * The graph (``--graph``): ``scalar`` (the default: one norm gain, ``--gain`` 4, no clipping), ``certified``
   (``hf_opt.CERTIFIED_RECIPE``) or ``legacy`` (``hf_opt.LEGACY_RECIPE``), with ``--pbits``-bit attention probabilities
   (8); ``--opts`` (JSON) replaces keyword arguments of ``build_opt_from_hf``.  The default graph is ``ppl_opt.py``'s
-  cell ``scalar-g4-p8`` at 128 tokens with test-end calibration, the same graph digest (the paper's numbers check it).
+  cell ``scalar-g4-p8`` at 128 tokens with test-end calibration, with the same graph digest (``paper/numbers.py``
+  checks it).
 * Rows, each a perplexity over the windows with its top-1 agreement with the fp32 checkpoint: the all-integer and the
   all-float copy; per group of components (``hybrid_opt.GROUPS``) leave-one-out (that group float, the rest integer)
   and add-one (only that group integer); unless ``--skip-sub``, per feature sub-row (``hybrid_opt.SUBROWS``) add-one

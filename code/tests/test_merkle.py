@@ -83,7 +83,7 @@ def test_changing_any_value_changes_the_digest():
 
 
 def test_length_is_bound():
-    """A prefix of a vector must not verify against the longer vector's digest."""
+    """A prefix of a vector has a different digest from the whole vector."""
     data = values(8)
     short = MerkleVectorCommitment.commit(data[:4])
     long = MerkleVectorCommitment.commit(data)

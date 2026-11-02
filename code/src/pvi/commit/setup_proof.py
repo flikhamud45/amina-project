@@ -29,7 +29,8 @@ are multiplied by the number of random-oracle queries (``2**grinding_bits``).  `
 
 **Per query.**  Once every ``E_j`` is ``e_j``-close, the per-query column check of matrix ``j`` fails to catch a
 wrong folded row only if all ``t`` columns land among the at most ``m_j - 1 + e_j`` positions where ``Enc(u)``
-agrees with ``u``'s committed combination or ``E_j`` is corrupted: probability
+agrees with the encoding of the true folded row (at most ``m_j - 1``) or ``E_j`` differs from ``Enc(A_j*)`` (at
+most ``e_j``): probability
 ``prod_{i<t} (m_j - 1 + e_j - i) / (n_j - i)``, the honest bound with ``m_j`` replaced by ``m_j + e_j``
 (:func:`setup_params` sizes ``t`` by it, and a verifier derives ``t`` from the certified radii,
 :func:`after_setup`).  The committed model is then the model ``M*`` of Theorem ``thm:untrusted``: the weights

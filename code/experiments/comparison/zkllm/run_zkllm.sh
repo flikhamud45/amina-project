@@ -34,8 +34,8 @@
 # then proved.  zkLLM writes its fixed-point weights and commitments (27 GB for Llama-2-7B, 52 GB for Llama-2-13B) to
 # ./zkllm-workdir, which prove links to a fresh folder in --scratch (default: the first of $TMPDIR, /tmp and the zkLLM
 # home with the space free; the free space is checked first) and deletes at its end (a zkllm-workdir that is a folder
-# of the checkout, as in a home prepared by hand, is used and kept; the work folders that a pre-empted job of this
-# user left are removed first).
+# of the checkout, as in a home prepared by hand, is used and kept; the work folders that a pre-empted job of the
+# same account left are removed first).
 # Options: --seqs LIST (prompt lengths, comma-separated; default 64,512,1024,2048; --seq is the same option),
 # --allow-failed-lengths (each length's record says "required": false, and a length that fails does not set the exit
 # status while another length succeeds), --reps N (default 3), --layers 0,1 (default), --scratch DIR, --parquet FILE
@@ -220,7 +220,7 @@ WORK="" LINKED=""
 if [ -d "$Z/zkllm-workdir" ] && [ ! -L "$Z/zkllm-workdir" ]; then
   echo "== using $Z/zkllm-workdir (a folder of the checkout, kept)"
 else
-  # a pre-empted job of this script may have left its work folder behind: this user's are removed first
+  # a pre-empted job of this script may have left its work folder behind: this account's are removed first
   for d in "$SCRATCH" "${TMPDIR:-}" /tmp "$ZH"; do
     [ -n "$d" ] && [ -d "$d" ] || continue
     find "$d" -maxdepth 1 -name 'zkllm-workdir.*' -user "$(id -un)" -exec rm -rf {} + 2> /dev/null

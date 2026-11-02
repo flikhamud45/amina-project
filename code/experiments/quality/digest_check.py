@@ -11,8 +11,8 @@ weight matrix and bias (``weights_sha256``), and with ``--commit`` a SHA-256 of 
 commitment plan ``--policy`` at rate ``--rate`` encoded on ``--commit-device`` (``roots_sha256``, ``n_roots``,
 ``commit_device``).  Run it on two machines, with two thread counts and with ``--commit-device cpu`` and ``cuda``:
 equal ``digest``, ``weights_sha256`` and ``roots_sha256`` mean the same model and the same ``C_M``.  The run
-package's job q-digest builds OPT-125M with 1 and 8 threads and OPT-1.3B twice, its commitment encoded on the GPU and
-on the CPU.
+package's ``quality`` tier (job ``q-digest``) builds OPT-125M with 1 and 8 threads and OPT-1.3B twice, its
+commitment encoded on the GPU and on the CPU.  The record also names the machine (``host``, ``cpu``).
 
     python -m experiments.quality.digest_check --model facebook/opt-125m --threads 1
     python -m experiments.quality.digest_check --model facebook/opt-1.3b --threads 8 --commit --commit-device cuda

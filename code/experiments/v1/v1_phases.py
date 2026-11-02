@@ -1,10 +1,9 @@
 """V1's verifier phase by phase, under each of its implementations, on the same queries.
 
-The breakdown behind the extended version's V1 verifier times (Sec. ``sec:eval-v1``, "Prover and verifier"): on
-Llama-2-7B in mode Kpre at 2,048 tokens, 1.44 s per block with the optimised verifier against 2.49 s with the
-baseline one, and the 45.4 s of the full model in ``tab:options`` and the body's V1 paragraph (the package's
-``cpuv`` tier measures the totals with ``v1_bytes.py --v1-verifier optimised baseline``; this script shows where
-the time goes).
+The breakdown behind V1's CPU verifier times on Llama-2-7B in mode Kpre at 2,048 tokens (``tab:options``, the V1
+paragraphs of Sec. ``sec:eval-v1`` and of the extended version): the run package's ``cpuv`` tier measures the totals
+with ``v1_bytes.py --v1-verifier optimised baseline``; this script shows where the time goes, per phase and per
+verifier.
 
     python -m experiments.v1.v1_phases --model llama2-7b --layers 2 --seq 2048 --mode Kpre --reps 3 \\
         --v1-verifier optimised baseline --device cuda --threads 8
@@ -45,7 +44,7 @@ fall back from ``products.lw_times`` (``n_lw_products_fallback``: a residual op 
 
 **Record** (one JSON line per verifier, then a table on stdout): ``label``, ``git``, ``model``, ``real`` (the
 checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
-(:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, ``mode``, ``policy``, ``fs``, ``lean``,
+(:func:`experiments.common.real_cells.recipe_fields`), ``layers``, ``seq``, ``mode``, ``policy``, ``fs``, ``lean``,
 ``lookups``, ``prob_max`` (the graph's attention probabilities' scale), ``lmax``, ``threads``, ``path`` (the
 verifier's name), ``queries``, ``accepted``, ``cut`` (the cut plan's sizes), ``timings`` (the median of every phase),
 ``verify_s`` (the median of each query's ``verify_*`` total), ``env``.  Every query must be accepted, else the exit
@@ -59,8 +58,8 @@ listed verifier's products (``baseline``: ``protocol._lw_e_old`` and ``extfield.
 per-block projection for Llama-2-7B (34,304 requantisation rows, 8,192 residual rows and 23,296 ``_xbar`` columns per
 block).
 
-Hardware and time: the extended version's numbers are 8 threads of a Xeon Silver 4114 with an RTX 2080 Ti prover
-(Llama-2-7B, 2 blocks, ``--lmax 24``: minutes).  The laptop check takes seconds.  With ``--real`` the checkpoint is
+Hardware and time: two Llama-2-7B blocks at 2,048 tokens take minutes (for example on 8 threads of a Xeon Silver
+4114 with an RTX 2080 Ti prover and ``--lmax 24``).  The laptop check takes seconds.  With ``--real`` the checkpoint is
 loaded in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for Llama-2-7B, next to the
 integer graph).
 """

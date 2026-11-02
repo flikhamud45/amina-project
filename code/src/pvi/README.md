@@ -63,7 +63,8 @@ folded. `datasets` loads the image datasets of the benchmark.
 **`pvi.kernels`: accelerated exact kernels.** `native` holds C++/OpenMP kernels for a CPU verifier and for integer
 re-execution: causal attention, the cheap operations, the int8 GEMM, field products, decoding of the claim encoding,
 and V1's window-table products. The library is compiled once per host and loaded with ctypes. `attention_triton` is
-the fused exact causal attention on a GPU. `codec_triton` holds the fused kernels of the claim encoder on a GPU.
+the fused exact causal attention on a GPU. `codec_triton` holds the fused kernels of the claim encoder and decoder
+on a GPU.
 Each kernel computes the same integers as the torch code it replaces. Without a compiler or Triton, or with its
 option off, the torch path runs.
 
@@ -87,14 +88,21 @@ the models and the model-substitution settings.
 
 **`pvi.options`: the implementation options.** Each option chooses one of several equivalent code paths: native or
 torch kernels, the fused GPU kernels, GPU or host decoding, int8 GEMMs, the hash threads of the tree absorption,
-V1's optimised or baseline verifier, and where a lean GPU prover keeps its claims until it encodes them
-(`host_claims`: on the GPU, the default, in pinned host memory, or `auto`: on the GPU unless they do not fit, then
-only the overflow staged; `pvi.v0.query.device_claim_budget`), and how a GPU verifier decodes the claims
-(`decode_memory`: the whole input at once, the default, or `low`: stream by stream with the exceptions patched in
-parts, `claimcodec.decode_device_parts`; `auto`: `low` only when the default decoder's predicted peak would exceed
-`decode_memory_budget` percent of the GPU). Every path gives the same integers, bytes and verdicts, and only time and memory
-change. An option is set for the process (`options.configure`) or for a block (`with options.using(...)`). Every
-script exposes each option as a command-line flag and records `options.describe()`. Six environment variables
-name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and `PVI_PY_INCLUDE` (the native and Triton
-kernels' compiler, build folder and Python headers), and `PVI_CACHE`, `PVI_CIFAR_ROOT` and `PVI_IMAGENET_ROOT`
-(`pvi.models.datasets`: the dataset cache and the CIFAR-10 and ImageNet folders).
+V1's optimised or baseline verifier and its Triton or torch GKR prover. Three options trade time for memory:
+
+* `host_claims`: where a lean GPU prover keeps its claims until it encodes them: on the GPU (the default), in
+  pinned host memory, or `auto` (on the GPU unless they do not fit, then only the overflow staged on the host;
+  `pvi.v0.query.device_claim_budget`);
+* `decode_memory`: how a GPU verifier decodes the claims: the whole input at once (the default), `low` (stream by
+  stream, the exceptions patched in parts; `pvi.v0.claimcodec.decode_device_parts`), or `auto` (`low` only when
+  the default decoder's predicted peak would exceed `decode_memory_budget` percent of the GPU);
+* `gkr_memory`: what V1's GPU prover keeps during the GKR: everything (the default), `low`, `host`, or `auto`
+  (the first path whose predicted peak is within `gkr_memory_budget` percent of the GPU).
+
+Every path gives the same integers, bytes and verdicts; only time and memory change. An option is set for the
+process (`options.configure`) or for a block (`with options.using(...)`). Every script exposes each option as a
+command-line flag (`--native/--no-native`, `--decode-memory auto`, ...) and records `options.describe()`. Six
+environment variables name places on the host and select no code path: `CXX`, `PVI_NATIVE_DIR` and
+`PVI_PY_INCLUDE` (the native and Triton kernels' compiler, build folder and Python headers), and `PVI_CACHE`,
+`PVI_CIFAR_ROOT` and `PVI_IMAGENET_ROOT` (`pvi.models.datasets`: the dataset cache and the CIFAR-10 and ImageNet
+folders).

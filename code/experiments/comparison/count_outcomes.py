@@ -81,8 +81,8 @@ def finished_cells(root: Path) -> set:
 
 def count(root: Path, policy: str = PAPER_POLICY, tags=(), definition=None, skip=frozenset()) -> dict:
     """``tags``: count only the cells whose name carries all of them.  ``definition``: {(suite, mode): {tag
-    sets}} (``experiments.paper.bench.definition_tagsets``): count only the defining defence and tamper cells.  ``skip``: (suite, model, cell) of finished cells not to count (a later run holds
-    them: :func:`count_runs`)."""
+    sets}} (``experiments.paper.bench.definition_tagsets``): count only the defining defence and tamper cells.
+    ``skip``: (suite, model, cell) of finished cells not to count (a later run holds them: :func:`count_runs`)."""
     c = {k: Counter() for k in KINDS}
     records, rejected = 0, []
     for path in sorted(root.glob("*/*/*.jsonl")):
@@ -147,10 +147,13 @@ def merge(counts: list[dict]) -> dict:
 
 
 def honest(c: dict, value: int, suite: str | None = None) -> int:
+    """Honest queries with verdict ``value`` (1 accepted, 0 rejected), in ``suite`` or in all."""
     return sum(n for (s, v), n in c["honest"].items() if v == value and suite in (None, s))
 
 
 def attacks(c: dict, value: int, suite: str | None = None, key: str = "attacks") -> int:
+    """Attacks with verdict ``value`` (1 rejected, 0 accepted), in ``suite`` or in all; ``key="policy"`` counts only
+    those on cells built under ``--policy``."""
     return sum(n for (s, v), n in c[key].items() if v == value and suite in (None, s))
 
 

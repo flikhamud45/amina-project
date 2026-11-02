@@ -14,8 +14,7 @@ Claims: format ``PVC3``
 A frame of reference whose exceptions carry only their high part (as "NewPFD").  There are no raw
 (int32) ops, since a slot of ``B = 30`` bits is never larger, and the encoder places each segment
 around the rounded median of a sample of its values (smaller encodings than around the mean on the
-CNNs, the same on the decoders; the magic of ``PVC2``, a format with raw ops and mean centres, is
-rejected).  The verifier knows every weight op's shape ``[N, M]``: ``N`` from the public graph,
+CNNs, the same on the decoders).  The verifier knows every weight op's shape ``[N, M]``: ``N`` from the public graph,
 ``M`` from the query's shape (``Verifier.claim_columns``).  The header repeats ``M``, and the
 decoder rejects any other before it allocates anything, so a malformed input costs it no more
 memory than the honest claims.
@@ -723,7 +722,7 @@ def _upload_all(arrays: list, device: torch.device) -> list[torch.Tensor]:
     return [flat[a:e] for a, e in zip(cut, cut[1:])]
 
 
-@functools.lru_cache(maxsize=4)          # per op only (and the host index once the host encoder needs it)
+@functools.lru_cache(maxsize=4)          # a layout holds per-op arrays (and the host index once computed)
 def _layout(shapes: tuple) -> _Layout:
     return _Layout(shapes)
 

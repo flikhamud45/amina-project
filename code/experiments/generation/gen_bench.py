@@ -1,6 +1,6 @@
 """A generated response proved as one prefill: prover and verifier time and proof size, greedy and sampled.
 
-Produces the generation cells of the final run (Sec. ``sec:gen-prefill``'s cost paragraph, ``tab:gen`` and
+Produces the paper's generation cells (Sec. ``sec:gen-prefill``'s cost paragraph, ``tab:gen`` and
 ``tab:gen-full`` in the extended version: Llama-2-7B and Qwen3-4B with a 512-token prompt, ``G`` in {64, 256},
 greedy and sampled, with the two tamper cells), the run package's ``gen`` tier, and with ``--real`` the generated
 responses of the real Llama-2-7B in the ``real`` tier.
@@ -31,17 +31,17 @@ itself, 11-bit attention probabilities).  For each ``G`` and decoding rule:
   (``token_rule_s``) and added to ``verify_s``;
 * two tamper cells on the first response, each of which must be rejected: ``wrong_token`` (a generated token
   replaced by another, the tokens after it generated again with the same rule, so only that token breaks it;
-  expected label ``token``) and ``forged_logits`` (the same response, the LM head's claimed logits at that position
-  raised so that the rule chooses the wrong token; expected ``freivalds``, or ``columns_code`` for a plan whose LM
-  head has the col layout).
+  expected label ``token``) and ``forged_logits`` (the ``wrong_token`` response, with the LM head's claimed logits at
+  that position raised so that the rule chooses the wrong token; expected ``freivalds``, or ``columns_code`` for a
+  plan whose LM head has the col layout).
 
 ``--real <checkpoint>``: the checkpoint's integer graph instead (:func:`experiments.common.checkpoints.real_graph`:
 OPT with the certified recipe ``hf_opt.CERTIFIED_RECIPE``, a Llama-family checkpoint with ``hf_llama.MAIN_RECIPE``
 and its fixed public prefix; ``--model`` names the benchmark shape it has), every block, or with ``--layers n`` its
 first ``n`` blocks with the same calibration and prefix, the full graph's first ``n``
-(:mod:`experiments.common.real_cells`); the prompts are the first WikiText-2 test windows of ``--prompt`` tokens, mode C commits the full
-graph's own weight ops (a build of a few blocks: planned and sized for the whole model, as a random-weight build), and
-the sampler's weight is ``a = round(c 2^16 / tau)`` for the LM head's real logit scale ``c``
+(:mod:`experiments.common.real_cells`); the prompts are the first WikiText-2 test windows of ``--prompt`` tokens,
+mode C commits the full graph's own weight ops (a build of a few blocks: planned and sized for the whole model, as a
+random-weight build), and the sampler's weight is ``a = round(c 2^16 / tau)`` for the LM head's real logit scale ``c``
 (``TokenSampler.for_temperature``, ``--temperature``), so sampled responses are draws of the integer model at that
 temperature.
 
@@ -49,15 +49,15 @@ temperature.
 ``layers``, ``n_layers``, ``prompt``, ``gen``, ``decode``, ``mode``, ``policy``, ``chosen``, ``lam``, ``rate``, ``fs``,
 ``wire``, ``lean``, ``prune_last``, ``prob_max`` (the graph's scale, :func:`pvi.models.decoder.prob_max_of`),
 ``lookups``, ``sampler``, ``real``, ``temperature``, ``logit_scale``, ``device``, ``verifier_device``, ``threads``),
-``positions``, ``reps``, ``columns``, ``queries``, ``accepted``,
+``positions``, ``reps``, ``columns``, ``queries`` (the timed ones), ``accepted`` (the timed queries and the warm-up),
 ``warmup_accepted``, ``warmup_transcript``, the medians and ``[min, max]`` of ``prove_s`` and ``verify_s`` over the
 timed queries, every timing and byte part (medians), every timed query's own values (``prove_s_all``,
-``verify_s_all``, ``timings_all``, ``token_rule_s_all``, and with Fiat--Shamir ``transcripts``), ``proof_bytes``, ``proof_mb_per_token`` (the proof over ``G``), ``token_rule_s``,
-``generate_s``, ``tampers`` (verdicts and labels), ``ok``, peak host and GPU memory over the build and the commitment
+``verify_s_all``, ``timings_all``, ``token_rule_s_all``, and with Fiat--Shamir ``transcripts``), ``proof_bytes``,
+``proof_mb_per_token`` (the proof over ``G``), ``token_rule_s``, ``generate_s``, ``tampers`` (verdicts and labels), ``ok``, peak host and GPU memory over the build and the commitment
 (``build_peak``) and over each line's queries (``peak``), ``build_s``, ``commit_s``, ``setup_cache``, ``env``.  The
 exit status is 1 if an honest response was rejected or a tampered one accepted.
 
-Hardware and time: the final run's cells run on an NVIDIA L40S prover with 8 CPU threads for the verifier; the
+Hardware and time: the paper's cells ran on an NVIDIA L40S prover with 8 CPU threads for the verifier; the
 package gives each 7B model (both ``G``, both rules, both modes) a job limit of three hours and 192 GB of host memory
 (generating the responses, without a KV cache, is a large part of it).  The laptop check above takes seconds.
 """

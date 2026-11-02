@@ -74,8 +74,8 @@ _TABLE_SPAN = 1 << 20
 
 def windows(s: torch.Tensor, m: int, sh: int = 30,
             span: tuple[int, int] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-    """``(L, W)``: ``lo(s)`` and ``lo(s + 1) - lo(s)``, the windows of the values ``s``.  Values spanning at most
-    ``2^20`` integers (a requantisation's int8 values, and typically a residual operation's ``Delta``) are looked up
+    """``(L, W)``: ``lo(s)`` and ``lo(s + 1) - lo(s)``, the windows of the values ``s``.  Values with ``max - min``
+    at most ``2^20`` (a requantisation's int8 values, and typically a residual operation's ``Delta``) are looked up
     in a table of ``lo`` over their range instead of being divided entry by entry: the same integers.  ``span``:
     bounds the values are known to lie in (a requantisation's clamp), which saves finding them."""
     if s.numel():

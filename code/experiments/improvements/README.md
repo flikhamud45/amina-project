@@ -9,14 +9,14 @@ and the prover's attention are `costs/perf.py` runs with the option flags that e
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| `tab:eval-improve`, "Opening and fold on int8 GEMMs (prover, C, T=64)": Llama-2-7B 1/32 and 4/32, Llama-2-13B 1/40, GPT-2 12/12; Sec. `sec:eval-cost` "3.7–4.3x" | `open_ab.py` | `python -m experiments.improvements.open_ab --model llama2-7b --layers 1 4 --queries 7`; `... --model llama2-13b --layers 1`; `... --model gpt2` | stdout: `prove_s` of the variants `float64` (before) and `int8` (after) |
+| `tab:eval-improve`, "Opening and fold on int8 GEMMs (prover, C, T=64)": Llama-2-7B 1/32 and 4/32, Llama-2-13B 1/40, GPT-2 12/12; Sec. `sec:eval-cost`'s and `app:eval-improve`'s gain on Llama-2 blocks (`\ImproveOpenRange`) and the opening's share of the float64 prover (`\ImproveOpenShare`) | `open_ab.py` | `python -m experiments.improvements.open_ab --model llama2-7b --layers 1 4 --queries 7`; `... --model llama2-13b --layers 1`; `... --model gpt2` | stdout: `prove_s` of the variants `float64` (before) and `int8` (after) |
 | `tab:eval-improve`, "Weight products on int8 GEMMs (forward pass)": Llama-2-7B 2/32 | `forward_ab.py` | `python -m experiments.improvements.forward_ab --model llama2-7b --layers 2 --seq 2048` | stdout: `prove_forward` of `float32` / `int8` |
-| `tab:eval-improve`, "Threaded assembly of the encoded claims (encoder)": OPT-1.3B 24/24, Llama-2-7B 2/32; the fused Triton encoder "1.74 against 1.54 s on OPT-1.3B" | `encode_ab.py` | `python -m experiments.improvements.encode_ab --model opt-1.3b --layers 24 --seq 2048 --fused`; `... --model llama2-7b --layers 2 --seq 2048` | stdout: `encode_s` of `one_thread` / `threaded` (/ `fused`) |
+| `tab:eval-improve`, "Threaded assembly of the encoded claims (encoder)": OPT-1.3B 24/24, Llama-2-7B 2/32 (`\ImproveEncodeRange`); the fused Triton encoder against the threaded one on OPT-1.3B, a negative result (`\ImproveFusedEncoder`, `\ImproveThreadedEncoder`) | `encode_ab.py` | `python -m experiments.improvements.encode_ab --model opt-1.3b --layers 24 --seq 2048 --fused`; `... --model llama2-7b --layers 2 --seq 2048` | stdout: `encode_s` of `one_thread` / `threaded` (/ `fused`) |
 | `tab:eval-improve`, "Fused exact attention in the prover (forward pass)": OPT-1.3B 12/24, Llama-2-7B 2/32 | `costs/perf.py` | before: `python -m experiments.costs.perf --model opt-1.3b --layers 12 --seq 2048 --modes Kpre --prune-last off --queries 3 --verifier-device cuda --stream --no-fused-attention --label attn-before`; after: the same without `--no-fused-attention` (`--label attn-after`); then `--model llama2-7b --layers 2` | stdout: `timings.prove_forward` |
 | `tab:eval-improve`, "GPU claim decoder and fused attention (GPU verifier, Kpre)": OPT-1.3B 12/24, Llama-2-7B 2/32 | `costs/perf.py` | before: `python -m experiments.costs.perf --model opt-1.3b --layers 12 --seq 2048 --modes Kpre --queries 3 --verifier-device cuda --stream --no-gpu-decode --no-fused-attention --label gpuv-before`; after: the same without the two `--no-...` flags; then `--model llama2-7b --layers 2` | stdout: `verify_s` |
 | `tab:eval-improve`, "Native exact kernels for every phase (CPU verifier, Kpre)": Llama-2-7B 2/32 | `costs/perf.py` | before: `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 2048 --modes Kpre --queries 3 --verifier-device cpu --threads 8 --no-native --no-malloc-tune --label cpuv-before`; after: the same without `--no-native --no-malloc-tune` (and with `CXX` set: the native kernels are compiled on first use) | stdout: `verify_s` |
-| "copies take 32% of the CUDA time of an OPT-1.3B query (12 blocks) and int8 GEMMs 4.4%" (`app:eval-improve`) | `gpu_profile.py` | `python -m experiments.improvements.gpu_profile --model opt-1.3b --layers 12 --seq 2048` | stdout: tables and a JSON line with `shares` |
-| "12.7 s for Llama-2-7B on 8 Xeon threads" (the Kpre client's key, `ext_discussion.tex`) | `fold_ab.py` | `python -m experiments.improvements.fold_ab --model llama2-7b --devices cpu cuda --reps 3 --threads 8` | stdout: `precompute_s` of `float64` / `default` |
+| `app:eval-improve`: the share of the CUDA time of an OPT-1.3B query (12 blocks) taken by copies and by int8 GEMMs (`\ProfileCopies`, `\ProfileIntMM`) | `gpu_profile.py` | `python -m experiments.improvements.gpu_profile --model opt-1.3b --layers 12 --seq 2048` | stdout: tables and a JSON line with `shares` |
+| `ext_discussion.tex`: the time the Kpre client takes to derive its key for Llama-2-7B on 8 CPU threads (`\KpreKeyLlama`) | `fold_ab.py` | `python -m experiments.improvements.fold_ab --model llama2-7b --devices cpu cuda --reps 3 --threads 8` | stdout: `precompute_s` of `float64` / `default` |
 | `quality.tex` and `app:eval-setup`: 11-bit attention probabilities change the proof's size by at most `\ProbBitsBytes`% and the prover's and verifier's times by at most `\ProbBitsTime`% (Llama-2-7B 2/32 at 2,048 tokens, modes Kpre and C, the CPU verifier) | `costs/perf.py` | `python -m experiments.costs.perf --model llama2-7b --layers 2 --seq 2048 --modes Kpre C --prob-max 255 2047 --queries 5 --verifier-device cpu --threads 8 --label prob-bits` (the two scales are variants on the same queries, interleaved) | stdout: `proof_bytes`, `prove_s`, `verify_s` of `prob_max` 255 and 2047 |
 
 Every script prints one JSON object per line with the run's environment under `env` (commit, host, CPU, GPU,
@@ -28,18 +28,19 @@ runtime flags to the GPU prover and 8 threads.
 
 ## Scripts
 
-Every script below but `gkr_bench.py` takes `--real <checkpoint>` (with `--recipe`, `--smooth` and `--calib-seq`, as
-`costs/perf.py`): instead of random weights and prompts, the integer graph of the checkpoint's first `--layers`
-blocks, the full graph's first blocks (`experiments.common.real_cells`: OPT's certified or legacy recipe, a
-Llama-family checkpoint's main recipe with its fixed prefix), queried on WikiText-2 test windows; every variant of an
+Every script below takes `--real <checkpoint>` (with `--recipe`, `--smooth` and `--calib-seq`, as `costs/perf.py`):
+instead of random weights and prompts, the integer graph of the checkpoint's first `--layers` blocks, the full graph's
+first blocks (`experiments.common.real_cells`: OPT's certified or legacy recipe, a Llama-family checkpoint's main
+recipe with its fixed prefix), queried on WikiText-2 test windows (`fold_ab.py` reads no query); every variant of an
 A/B runs on the same graph and the same windows, and the records name `real`, `recipe`, `smooth` and `calib_seq`
 (None for random weights). The run package passes it wherever its rule gives the cell a checkpoint
-(`package/README.md`, Sec. 2); the 8- against 11-bit A/B of `perf.py` stays on random weights.
+(`package/README.md`, Sec. 1); the 8- against 11-bit A/B of `perf.py` stays on random weights.
 
 ### `open_ab.py`
 
 Builds the decoder as `costs/bench.py` does (random weights, `--layers` blocks, the last one pruned), commits it under
-`--policy` and runs `--queries` mode-C queries with `run_query`, each once with the prover's fold and column openings
+`--policy` and runs one warm-up and `--queries` timed mode-C queries with `run_query`, each once with the prover's
+fold and column openings
 in float64 (`field.small_matmul_mod`) and once on int8 GEMMs (`field.int8_weight_matmul`), alternating, with the same
 challenge seed: it checks that the folded rows, opened columns and multiproofs are identical and that the verifier
 accepts. Record: the medians of the prover's parts, `prove_s` (the prover's total: the table's value), `open_fold_s`,
@@ -64,14 +65,14 @@ single-threaded copy) and on `--threads` threads, and with `--fused` the fused T
 The Kpre client's precomputation `u = chi A` for every weight matrix (`Verifier.precompute`) with the float64 limb
 products (the option `int8_fold` off) and with the default path (on a CPU the native exact field product, which needs
 the native kernels; on a GPU int8 GEMMs), on the same challenges; every `u` must equal the float64 path's. The full
-Llama-2-7B holds its 6.7 GB of int8 weights in host memory; on 8 threads of a Xeon Silver 4114 its float64 path took
-107 s per run and the native path 12.7 s.
+Llama-2-7B holds its 6.7 GB of int8 weights in host memory; on 8 threads of a Xeon Silver 4114, for example, its
+float64 path took 107 s per run and the native path 12.7 s.
 
 ### `gpu_profile.py`
 
 One query with the prover and the streaming verifier on the GPU (default Kpre with the verifier's own embedding rows)
 after a warm-up, profiled with `torch.profiler`: the operators ranked by CUDA and by CPU time, and the share of the
-total CUDA time of `aten::copy_` (the host-device copies), `aten::_int_mm` (the int8 GEMMs), `aten::index_select` and
+total CUDA time of `aten::copy_` (every tensor copy, the host-device transfers included), `aten::_int_mm` (the int8 GEMMs), `aten::index_select` and
 the fused attention kernel (`--share` chooses others). Needs a CUDA GPU; minutes.
 
 ## How the "before" paths are selected
@@ -92,7 +93,7 @@ records' `int8_ok` field says whether it did.
 
 ## Reproducing the paper's numbers
 
-The table's numbers come from the final platform (an NVIDIA L40S prover and GPU verifier, 8 threads of its CPU), each
+The table's numbers come from the run's platform (an NVIDIA L40S prover and GPU verifier, 8 threads of its CPU), each
 row's two commands run one after the other on the same node: the run package's `improve` tier runs them. The commands use
 the paper's configuration (Fiat-Shamir, the plan `cnn18c`).
 

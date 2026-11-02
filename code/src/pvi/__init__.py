@@ -25,8 +25,8 @@ Sub-packages:
     Hugging Face checkpoints, image models and their int8 quantiser.
 
 ``pvi.kernels``
-    Exact native CPU kernels (C++/OpenMP) and Triton GPU kernels (attention, the claim encoder); each computes the
-    same integers as the torch code it replaces.
+    Exact native CPU kernels (C++/OpenMP) and Triton GPU kernels (attention, the claim encoder and decoder); each
+    computes the same integers as the torch code it replaces.
 
 ``pvi.baseline``
     The spot-checking verifiers the attack targets: the path protocol of Anchuri et al. (float and integer

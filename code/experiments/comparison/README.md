@@ -1,14 +1,15 @@
 # Comparison with published systems, and the benchmark's tables and counts
 
 Sec. `sec:eval-compare` sets our costs against published zkSNARKs and Maverick on matched models, each as reported on
-its own hardware; the benchmark cells behind our side, and behind `tab:eval-llm`, are records of `costs/bench.py` (the run
-package's `bench` tier; the stored roots below hold the values the paper prints before the final run). These scripts never run a model: `literature.py` turns the catalogue of published
-measurements into the table the comparison quotes, `aggregate.py` turns a platform's raw benchmark records into its
-tables, `count_outcomes.py` counts every honest query and every attack in them, `fingerprint_check.py` checks that
-two platforms agree on every hardware-independent value, and `proof_digests.py` proves fixed cells on two devices
-(and compares two platforms' runs of them) proof byte for proof byte. `paper/numbers.py` reads their outputs (`paper/bench.py`).
-[`zkllm/`](zkllm/README.md) runs zkLLM's public demo on the run's GPU (the run package's optional `zkllm` tier) for
-zkLLM's prover on the same GPU model.
+its own hardware; the benchmark cells behind our side, and behind `tab:eval-llm`, are records of `costs/bench.py` (the
+run package's `bench` tier; the stored roots below hold the values the paper prints before the final run, its
+fallback). These scripts never run a model: `literature.py` turns the catalogue of published measurements into the
+table the comparison quotes, `aggregate.py` turns a platform's raw benchmark records into its tables,
+`count_outcomes.py` counts every honest query and every attack in them, `fingerprint_check.py` checks that two
+platforms agree on every hardware-independent value, and `proof_digests.py` proves fixed cells on two devices (and
+compares two platforms' runs of them) proof byte for proof byte. `paper/numbers.py` reads their outputs
+(`paper/bench.py`). [`zkllm/`](zkllm/README.md) runs zkLLM's public demo on the run's GPU (the run package's optional
+`zkllm` tier) for zkLLM's prover on the same GPU model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
@@ -28,10 +29,9 @@ GPU; each takes seconds to a minute on a laptop CPU.
 `artifacts/comparison/` (described in its own README) holds one raw root per platform, `raw_<platform>/<suite>/
 <model>/<cell>.jsonl` (`<suite>`: `cnn` or `llm`; a finished cell has a `.done` marker; `PLATFORM.json` names the
 root's GPU and CPU), the tables `aggregate.py` derives from it in `tables_<platform>/`, the literature catalogue and
-the curated table, and `excluded_cells.csv` (timings of the stored roots withheld from the values the paper prints before the final run; no
-script reads it). The
-roots the paper uses, all with an NVIDIA L40S prover and 8 threads of an AMD EPYC 9334 as the CPU verifier unless
-stated:
+the curated table, and `excluded_cells.csv` (timings of the stored roots withheld from the values the paper prints
+before the final run; no script reads it). The roots the paper uses, all with an NVIDIA L40S prover and 8 threads of
+an AMD EPYC 9334 as the CPU verifier unless stated:
 
 | Root | What it holds | Used for |
 |---|---|---|
@@ -99,8 +99,8 @@ accuracy within `--accuracy-tolerance` (0.002: cuDNN may change its last digits)
 honest rejection and every accepted attack of `new`, and exits 1 on any problem or when nothing could be compared.
 Before a long run on new hardware it checks the new root's first cells against a stored root. Cells are compared by
 name, so the final run's 11-bit decoder cells (tagged `pmax2047`) have no counterpart in the stored 8-bit roots: the
-comparison then covers the image models' cells. Roots written from the final run's commit on also record every
-Fiat-Shamir query's transcript digest (`proof_transcript`) and the commitment's roots (`commit_roots_sha256`), which it
+comparison then covers the image models' cells. The final run's roots also record every Fiat-Shamir query's
+transcript digest (`proof_transcript`) and the commitment's roots (`commit_roots_sha256`), which it
 compares as well.
 
 ### `proof_digests.py`

@@ -120,25 +120,26 @@ width at least $N$ and one further hidden layer. In a transformer the LayerNorm 
 blocks the 0/1 patterns; we do not claim the embedding. (v)~Joint statistics are not covered.
 \end{remark}
 
-\section{The Defence: Semantics, Proofs and Parameters}
+\section{Defence: Semantics, Proofs, Parameters}
 \label{app:defence}
 
 \subsection{Integer Semantics}
 \label{app:semantics}
 
-A requantisation computes
-$\mathrm{clamp}(\lfloor(mz+2^{29})/2^{30}\rfloor,-127,127)$; a residual addition adds
-$\lfloor(mz+2^{29})/2^{30}\rfloor$ and clamps to $[1-2^{22},2^{22}-1]$. LayerNorm subtracts the
-rounded integer mean, RMSNorm does not; both output
-$\mathrm{clamp}(\lfloor(g_ix_i+2^{15}\sigma)/(2^{16}\sigma)\rfloor,-127,127)$ with public integer
-gains $g_i$ and the exact $\sigma=\max(1,\lfloor\sqrt{\lfloor\sum_ix_i^2/d\rfloor}\rfloor)$.
+A requantisation computes $\mathrm{clamp}(\rho_m(z),-127,127)$, where
+$\rho_m(z)=\lfloor(mz+2^{29})/2^{30}\rfloor$ for a public multiplier $m$; a residual addition adds
+$\rho_m(z)$ and clamps to $[1-2^{22},2^{22}-1]$. LayerNorm subtracts the rounded integer mean, RMSNorm does not; with public
+integer gains $g_i$, both output
+\begin{align*}
+  &\mathrm{clamp}(\lfloor(g_ix_i+2^{15}\sigma)/(2^{16}\sigma)\rfloor,-127,127),\ \text{where}\\
+  &\sigma=\max(1,\lfloor\sqrt{\lfloor\textstyle\sum_ix_i^2/d\rfloor}\rfloor).
+\end{align*}
 Activations are 256-entry int8 tables. Rotary embeddings rotate pairs by
 $\mathrm{round}(2^{14}\cos t\theta_j)$ and $\mathrm{round}(2^{14}\sin t\theta_j)$, then round and
 clamp. Attention maps the score gaps $g_j=\max_{j'}s_{j'}-s_j$, $s=qk^\T$, to
-$i_j=\mathrm{clamp}(\lfloor(m_sg_j+2^{29})/2^{30}\rfloor,0,255)$ and
-$e_j=\mathrm{round}(2^{15}e^{-i_j/16})$ ($0$ if masked); with $E=\sum_je_j$,
-$P_j=\lfloor(2P_{\max}e_j+E)/(2E)\rfloor\in[0,P_{\max}]$ for a public $P_{\max}$ (255 or 2{,}047), and
-$PV$ is requantised. Arithmetic is exact: int8
+$i_j=\mathrm{clamp}(\rho_{m_s}(g_j),0,255)$ and $e_j=\mathrm{round}(2^{15}e^{-i_j/16})$ ($0$ if
+masked), and with $E=\sum_je_j$ to $P_j=\lfloor(2P_{\max}e_j+E)/(2E)\rfloor\in[0,P_{\max}]$ for a
+public $P_{\max}$ (255 or 2{,}047); $PV$ is requantised. Arithmetic is exact: int8
 products sum in 32-bit blocks of $2^{16}$, and attention runs in float32 below $2^{24}$ (scores at
 most $2^{21}$, partial sums of $PV$ below $(P_{\max}+T/2)\cdot128$ for $T<2^{15}$).
 
@@ -231,6 +232,6 @@ $v_{ij}\notin\Vtab$.
 \end{lemma}
 
 Lemmas~\ref{lem:v1-window} and~\ref{lem:v1-nowrap}, the soundness of the fractional-sum GKR and the
-column check complete the proof sketch of Theorem~\ref{thm:v1}; the lemmas and the full proof are in
-the extended version~\cite{fullversion}. Under Fiat--Shamir the new rounds err with probability at
+column check complete the proof sketch of Theorem~\ref{thm:v1}; the lemmas' proofs and the full
+proof are in the extended version~\cite{fullversion}. Under Fiat--Shamir the new rounds err with probability at
 most $1/p^8$, $3/p^8=2^{-245.7}$ and $2^{\VOneLargeLookupLog{}}$ (Llama-2-13B at 2{,}048 tokens).

@@ -31,25 +31,22 @@ make an honest proof fail.
 \label{app:plans}
 
 Each Merkle tree hashes its leaves and its inner nodes with separate domain prefixes. $C_M$ uses
-no secret randomness, so anyone who holds the weights can recompute it. Long codewords need fewer
-opened columns, and matrices whose codewords have equal length can share one tree and one Merkle
-multiproof. The public planning rule chooses among six candidate plans of codeword lengths and
-layouts. The five weight matrices of LeNet-5, for example, share one tree of $2^{18}$ positions and
-open 15 columns, instead of 66 in each of five trees. In the transposed layout, operations that
-read the same input, such as the query, key and value projections, are stacked into one matrix.
+no secret randomness, so anyone who holds the weights can recompute it. A public \emph{plan}, part
+of $C_M$, fixes each matrix's codeword length and layout. A longer codeword needs fewer opened
+columns per query at the price of a longer one-time encoding, and matrices whose codewords have
+equal length can share one tree and one Merkle multiproof. The five weight matrices of LeNet-5, for
+example, share one tree of $2^{18}$ positions and open 15 columns, instead of 66 in each of five
+trees. Table~\ref{tab:eval-plans} compares six candidate plans. Our runs use one plan for every
+model: each matrix is encoded at $n=\max(2^{18},2\,\mathrm{next\_pow2}(k))$ points, so most
+matrices share a few trees (six for Llama-2-7B; Table~\ref{tab:params}).
 
-\para{The plan and the transposed layout.} Matrices whose codewords have equal length can share a
-tree and a multiproof. Our runs use one plan for every model: each matrix is encoded at
-$n=\max(2^{18},2\,\mathrm{next\_pow2}(k))$ points, so most matrices share a few trees (six for
-Llama-2-7B). A longer codeword opens fewer columns per query at the price of a longer one-time
-encoding, which the prover does once per model (Tables~\ref{tab:params} and~\ref{tab:eval-plans}); the plan is part of
-$C_M$. A layer with many
-rows, such as GPT-2's output layer ($N=50{,}257$), encodes the rows of $A_\ell^\T$ instead (the
-\emph{transposed layout}). An embedding table without a bias is a Merkle tree over its
-rows~\cite{commitllm2026}. For a transposed matrix the verifier combines positions with
-$\chi'\in\F^{T\times r}$ and checks $\enc(Z\chi')$ against the opened columns combined by
-$[X;\mathbf 1]\chi'$ (Appendix~\ref{app:sound}). Opened rows of a lookup table are checked against
-its root.
+\para{The transposed layout.} A layer with many rows, such as GPT-2's output layer
+($N=50{,}257$), encodes the rows of $A_\ell^\T$ instead, and operations that read the same input,
+such as the query, key and value projections, are stacked into one transposed matrix. For a
+transposed matrix the verifier combines positions with $\chi'\in\F^{T\times r}$ and checks
+$\enc(Z\chi')$ against the opened columns combined by $[X;\mathbf 1]\chi'$
+(Appendix~\ref{app:sound}). An embedding table without a bias is a Merkle tree over its
+rows~\cite{commitllm2026}, and its opened rows are checked against its root.
 
 \subsection{The Fiat--Shamir Transcript}
 
@@ -69,7 +66,8 @@ Appendix~\ref{app:sound}.
 
 \subsection{Untrusted Commitments: Measurements, Trade-off and Scope}
 
-\para{The split commitment in practice.} For the smallest tree of Llama-2-7B
+\para{The split commitment in practice.} Without the setup proof, per-query checks catch a
+malformed commitment only weakly. For the tree of Llama-2-7B with the fewest columns
 ($t=\ParamsColumnsMinInt{}$ with interactive queries), Eq.~\eqref{eq:split} gives an acceptance probability of
 about $2^{-\ParamsColumnsMinInt{}}$ per query, not $2^{-128}$. On a small decoder with one weight row changed in one
 operation, the acceptance rate over 300 queries with a small $t$ matched Eq.~\eqref{eq:split}.
@@ -87,18 +85,18 @@ setup proof is therefore required for transposed matrices.
 catches a far matrix with probability about $e_j/n_j$, and lengthens every query, whose bound in
 Theorem~\ref{thm:untrusted} has $k_j+e_j$ in place of $k_j$. Each tree takes the radius, among the
 fractions $2^0,\dots,2^{-10}$ of the unique-decoding radius, that minimises $t^0_j/a+t_j$ over $a$
-amortised queries (Table~\ref{tab:setup}; the parameters are derived in
-Appendix~\ref{app:untrusted}). At $a=1{,}000$, Llama-2-7B pays \SetupGBLlamaB{}\,GB once and \SetupQueryGrowthLlamaB{}\% more column
+amortised queries (Table~\ref{tab:setup}; Appendix~\ref{app:untrusted} derives the parameters).
+At $a=1{,}000$, Llama-2-7B pays \SetupGBLlamaB{}\,GB once and \SetupQueryGrowthLlamaB{}\% more column
 bytes per interactive query; at 2{,}048 tokens the change per interactive query is below \SetupQueryShareLlamaB{}\% of the proof. Our
 implementation covers commitment plans, including shared trees and transposed matrices. With radii
 for $a=100$, the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove on the \PlatformGpu{} and
 \SetupVerifierLlama{} to verify on 8 threads of the \PlatformCpu{}, and GPT-2's \SetupProverGpt{} and \SetupVerifierGpt{}.
 
 \begin{table}[t]
-  \caption{Untrusted commitments at $\lambda=128$: the one-time setup proof and the opened columns
-  per interactive query, with setup parameters amortised over $a=100$ or $1{,}000$ queries (the byte model;
-  interactive queries, 4 bytes per field element; the plan of mode $\sC$, codewords of at least
-  $2^{\PlanLogPoints{}}$ points)}
+  \caption{An untrusted commitment costs a one-time setup proof and more opened columns per query.
+  Radii chosen for $a=100$ or $1{,}000$ amortised queries; $\lambda=128$, interactive queries, byte
+  model with 4 bytes per field element, mode $\sC$ with codewords of at least
+  $2^{\PlanLogPoints{}}$ points}
   \label{tab:setup}
   \centering
   \footnotesize
@@ -113,13 +111,14 @@ for $a=100$, the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove on
   \end{tabular}
 \end{table}
 
-\para{How much a different test could save.} For Llama-2-7B at $\lambda=128$, with the radii behind
+\para{How much a different test could save.} Little: the opened columns dominate the setup proof,
+and another proximity test at the same radii opens them too. For Llama-2-7B at $\lambda=128$, with the radii behind
 Table~\ref{tab:setup}, the setup proof is \SetupMBLlamaA{}\,MB at $a=100$. Of this, \SetupColumnsMBLlamaA{}\,MB (\SetupColumnsShareLlamaA{}\%)
 are opened columns, \SetupCombinedMBLlama{}\,MB (\SetupCombinedShareLlamaA{}\%) are the combined rows $\psi_jA^*_j$, and at most \SetupPathsMBLlamaA{}\,MB
 (\SetupPathsShareLlamaA{}\%) are authentication paths; the byte model counts $\log_2n_j$ hashes per opened column. At
 $a=1{,}000$ it is \SetupMBLlamaB{}\,MB: \SetupColumnsMBLlamaB{}\,MB (\SetupColumnsShareLlamaB{}\%) of columns, the same \SetupCombinedMBLlama{}\,MB (\SetupCombinedShareLlamaB{}\%) of
 combined rows and at most \SetupPathsMBLlamaB{}\,MB of paths. By Remark~\ref{rem:forced}, a FRI-, STIR-, WHIR- or
-BaseFold-style test on this commitment, at the same radii and error per matrix, therefore opens at
+BaseFold-style test~\cite{fri2018,basefold} on this commitment, at the same radii and error per matrix, therefore opens at
 least the same columns. It could replace the combined rows with a shorter proof that $\psi_jE_j$ is
 close to the code. That saves at most \SetupCombinedShareLlamaA{}\% at $a=100$ and \SetupCombinedShareLlamaB{}\% at $a=1{,}000$. Everything other
 than the columns is \SetupNonColumnsShareLlamaA{}\% and \SetupNonColumnsShareLlamaB{}\% of the setup proof, and at most \SetupNonColumnsShareMaxA{}\% and \SetupNonColumnsShareMaxB{}\% for the four
@@ -136,10 +135,7 @@ and $Z_\ell$, so the claims of about $\lceil k_\ell/T\rceil$ queries reveal $A_\
 thus suits weights that the client may see. When the int8 model can be recomputed from the public
 checkpoint and recipe, recomputing $C_M$ also settles which model is committed, and it is cheaper
 than a setup proof, which for GPT-2 is larger than the int8 weights. The setup proof serves
-clients that cannot have $C_M$ recomputed. Its opened columns are forced for column-hash
-commitments (Remark~\ref{rem:forced}): a batched proximity proof over the rows in the style of
-FRI~\cite{fri2018} or BaseFold~\cite{basefold} would still open them, and could replace only the
-combined rows, \SetupCombinedShareLlamaA{}\% of the setup proof for Llama-2-7B at $a=100$.
+clients that cannot have $C_M$ recomputed.
 
 \subsection{One Query in Mode $\sC$}
 Figure~\ref{fig:protocol} shows the three rounds of one query in mode $\sC$ with an honest commitment.

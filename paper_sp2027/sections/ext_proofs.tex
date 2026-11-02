@@ -112,8 +112,8 @@ $T$, and for an offset $o$ we write $\mathrm{Att}_o(Q',K,V)_i=g\big(q'_i,(k_j,v_
 \label{lem:prune-local}
 In the integer semantics of Appendix~\ref{app:semantics}, every operation of the decoders of
 \texttt{build\_decoder} other than attention and the slices $S_n$ is position-local. All are
-position-uniform except RoPE and the learned position ids, whose functions $f_t$ depend on $t$ only
-through the absolute position index. Attention is causal attention.
+position-uniform except RoPE and the learned position ids, whose $f_t$ depend on the absolute
+position $t$. Attention is causal attention.
 \end{lemma}
 
 \begin{proof}
@@ -244,12 +244,13 @@ $\mathcal G^{(n)}_{\mathrm{pr}}$.
 \end{lemma}
 
 \begin{proof}
-By Lemma~\ref{lem:prune-local} every operation is position-local or causal attention, and none has
-a constant that depends on the input. By induction over the operations in graph order, every tensor
-at position $t$ computed on $s$ equals the same tensor at position $t$ computed on any prefix
+By Lemma~\ref{lem:prune-local} every operation other than the slice $S_n$ before the LM head is
+position-local or causal attention, and none has a constant that depends on the input. By induction
+over the operations in graph order up to that slice, every tensor at position $t$ computed on $s$
+equals the same tensor at position $t$ computed on any prefix
 $s_0\cdots s_{t'}$ with $t\le t'$: a position-local operation reads position $t$ of its inputs and
-the index $t$, and row $t$ of causal attention reads rows $j\le t$ of its inputs. Column $j$ of the
-LM head of $\mathcal G^{(n)}$ is position $T-n+j$, which is the last position of the prefix of
+the index $t$, and row $t$ of causal attention reads rows $j\le t$ of its inputs. The slice keeps
+positions $T-n,\dots,T-1$, so column $j$ of the LM head of $\mathcal G^{(n)}$ is position $T-n+j$, which is the last position of the prefix of
 length $T-n+j+1$, where $\mathcal G$ applies its LM head. For the pruned graph, combine this with
 Theorem~\ref{thm:prune}(a).
 \end{proof}
@@ -366,9 +367,10 @@ $\mathrm{rec}\big(L\|\texttt{/tree},\ \langle c\rangle_8\|\langle2^{22}\rangle_8
 under $L$. The key of a challenge with label $L_{\mathrm{ch}}$ is
 $K=H_{256}(\text{transcript string}\,\|\,\texttt{challenge/}\,\|\,L_{\mathrm{ch}})$
 (\texttt{Challenger.\_key}), and the challenge is expanded from $K$ as in
-Appendix~\ref{app:the-conv}, with inputs $K\,\|\,\cdot$. A claims message of about \ProofLlamaLongC{}
-(Llama-2-7B at 2{,}048 tokens, Section~\ref{sec:v1}) has about \TreeLeavesLlama{} leaves, so the transcript
-absorbs about \TreeKBLlama{}\,kB instead of \ProofLlamaLongC{}, and the leaves are hashed in parallel.
+Appendix~\ref{app:the-conv}, with inputs $K\,\|\,\cdot$. For Llama-2-7B at 2{,}048 tokens, whose
+proof of \ProofLlamaLongC{} consists mostly of claims (Section~\ref{sec:eval-cost}), the claims message
+has about \TreeLeavesLlama{} leaves, so the transcript absorbs about \TreeKBLlama{}\,kB instead of
+gigabytes, and the leaves are hashed in parallel.
 
 \para{Labels.} Two conditions on labels make the transcript decodable.
 (L1)~Every label, absorbed or of a challenge, is shorter than $25{,}448$ bytes, the number whose
@@ -415,8 +417,8 @@ Model SHAKE-256 as a random oracle and assume (L1) and (L2). Let $\Pi$ be a publ
 the implementation (v0 in mode $\sC$ or $\sK$, with or without the compact encoding, or the
 public-coin part of V1) with $k$ challenge rounds and round-by-round error
 $\varepsilon_{\mathrm{rbr}}=\max_i\varepsilon_i$, and let $\mathrm{FS}(\Pi)$ be its non-interactive
-form with the transcript above, which absorbs the statement first. For every prover that makes at
-most $Q$ oracle queries and outputs a statement and a proof, the probability that the statement is
+form with the transcript above, which absorbs the statement first. Fix the graph. For every prover
+that makes at most $Q$ oracle queries and outputs a statement on this graph and a proof, the probability that the statement is
 false and the verifier accepts is at most
 \[
   (Q+k)\,\varepsilon_{\mathrm{rbr}}+N^2\,2^{-256},
@@ -427,8 +429,8 @@ makes on the proof (leaves, keys and expansions).
 
 \begin{proof}
 Consider all oracle queries of the prover and of the verifier, at most $N$, in the order they are
-made. Every challenge input of a query begins with the same 32 bytes $\sigma_0$: the domain string, the
-framing of the first record, \texttt{graph}, and the first byte of the graph digest. (The setup proof's transcript
+made. Every challenge input begins with the same 32 bytes $\sigma_0$: the domain string, the
+framing of the first record, \texttt{graph}, and the first byte of the digest of the fixed graph. (The setup proof's transcript
 uses the same domain string but begins with the record \texttt{setup/params}; its challenge inputs begin with
 other fixed 32 bytes $\sigma_0'$, and the argument below applies to it with $\sigma_0'$ in place of
 $\sigma_0$.) Call a 32-byte value
@@ -479,8 +481,8 @@ implementation draws $\theta_{k-1}$ and $\eta_k$ of a GKR instance together, and
 vectors $\chi$ of the clear operations.
 \end{corollary}
 
-\noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$, should be read with
-$Q+k$ in place of $Q$, or with $Q$ counting the verifier's $k$ key queries. At $Q=2^{64}$ the term
+\noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$, is this
+bound with the verifier's $k$ key queries counted in $Q$. At $Q=2^{64}$ the term
 $N^2\,2^{-256}$ is about $2^{-128}$, as large as the target, because keys and leaves have 32 bytes;
 a collision in the SHA-256 Merkle trees, which Theorems~\ref{thm:sound} and~\ref{thm:untrusted}
 exclude, has probability of the same order (Remark~\ref{rem:rbr-max}).
@@ -694,8 +696,8 @@ $r=\lceil193/\log_2p\rceil=7$ unchanged, and lower each $t_j$ by about 4\%, sinc
 linearly with $\beta$. We keep the conservative parameters. Neither choice covers the collision term
 $N^2\,2^{-256}$ of Theorem~\ref{thm:fstree}, which is about $2^{-128}$ at $Q=2^{64}$; the total
 Fiat--Shamir error at that $Q$ therefore exceeds $2^{-128}$, slightly with the conservative
-parameters ($2^{-128}+2^{-136.8}$) and by a factor of 2 with $\beta=\lambda+65$, and $2^{-128}$
-holds for $Q\le2^{63}$ with either.
+parameters ($2^{-128}+2^{-136.8}$) and by half with $\beta=\lambda+65$ ($2^{-128}+2^{-129}$), and
+$2^{-128}$ holds for $Q\le2^{63}$ with either.
 \end{remark}
 
 \subsection{V1 in Mode \texorpdfstring{$\Kpre$}{Kpre}}
@@ -935,12 +937,10 @@ Theorem~\ref{thm:dich}(a) treat samplers in general.
 
 \begin{table}[t]
   \caption{Uniform paths needed to catch an edit of $k$ neurons in one FFN layer of width $N$ with
-  probability $1-2^{-40}$: $s_{40}(k,N)$ of Proposition~\ref{prop:paths}. Computed from the formula;
-  $k=1$ is the edit measured on OPT-6.7B, and $k=\InrangeKMedian{}$, $\InrangeDownKMedian{}$ and
-  $\InrangeKMax{}$ are the median in-range edit, the median lowering-only edit and the largest in-range
-  edit (moves in either direction) measured on OPT-1.3B (Section~\ref{sec:break}; of an even number of edits, the
-  lower median); $k=16$, and every
-  $k$ for the other models, is illustrative.}
+  probability $1-2^{-40}$: about $27.7N/k$ ($s_{40}(k,N)$, Proposition~\ref{prop:paths}). $k=1$ is the
+  edit measured on OPT-6.7B; $k=\InrangeKMedian{}$, $\InrangeDownKMedian{}$ and $\InrangeKMax{}$ are the
+  median in-range edit, the median lowering-only edit and the largest in-range edit on OPT-1.3B
+  (Section~\ref{sec:break}; lower medians); the other entries are illustrative.}
   \label{tab:paths}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -955,7 +955,8 @@ Theorem~\ref{thm:dich}(a) treat samplers in general.
 
 \begin{table*}[t]
   \caption{Probability $(1-k/N)^s$ that $s$ uniform paths accept an edit of $k$ neurons in one FFN
-  layer (computed from Proposition~\ref{prop:paths}; the edits $k$ of Table~\ref{tab:paths}).}
+  layer: about $e^{-sk/N}$, small only when $s$ is several times $N/k$ (Proposition~\ref{prop:paths};
+  $k$ as in Table~\ref{tab:paths}).}
   \label{tab:paths-acc}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}

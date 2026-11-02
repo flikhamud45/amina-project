@@ -1,12 +1,12 @@
 """The GPU's energy counter: joules spent by one GPU between two reads, for the energy per served or proved query.
 
-NVML keeps a counter of the energy a GPU has consumed since the driver was loaded (``nvmlDeviceGetTotalEnergyConsumption``,
-millijoules; Volta and later).  :class:`EnergyMeter` reads it through ``ctypes`` from the driver's own library
-(``libnvidia-ml.so.1``, ``nvml.dll``), so no Python package is needed, for the GPU that torch numbers 0 under
-``CUDA_VISIBLE_DEVICES`` (found by its UUID).  A read takes microseconds and starts no CUDA work, so it can sit at the
-edges of a timed window without changing it.  Where there is no NVIDIA driver, no such GPU or no counter (a CPU run,
-an older GPU), :meth:`EnergyMeter.read` returns ``None`` and every energy field of a record is ``None``; nothing
-fails.
+NVML keeps a counter of the energy a GPU has consumed since the driver was loaded
+(``nvmlDeviceGetTotalEnergyConsumption``, millijoules; Volta and later).  :class:`EnergyMeter` reads it through
+``ctypes`` from the driver's own library (``libnvidia-ml.so.1``, ``nvml.dll``), so no Python package is needed, for the
+GPU that torch numbers 0 under ``CUDA_VISIBLE_DEVICES`` (found by its UUID).  A read takes microseconds and starts no
+CUDA work, so it can sit at the edges of a timed window without changing it.  Where there is no NVIDIA driver, no such
+GPU or no counter (a CPU run, an older GPU), :meth:`EnergyMeter.read` returns ``None`` and every energy field of a
+record is ``None``; nothing fails.
 
 The counter is updated by the driver at its own rate (tens of milliseconds on recent GPUs), so a window much shorter
 than that has a coarse energy; :func:`joules_per_call` therefore times back-to-back calls for at least a given number

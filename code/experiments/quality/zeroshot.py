@@ -48,8 +48,8 @@ Output: one JSON line per task and model (stdout without the per-document lists,
 ``--out``): accuracy, ``acc_norm``, the number of documents, every document's correctness and choice (so runs can be
 pooled), and for the integer model the paired difference to the reference with a 95% bootstrap interval over
 documents and the share of documents on which both choose the same answer; ``recipe``, ``opts``, the graph's
-``digest`` and ``env`` (``records.environment``).  ``--no-int``/``--no-ref`` split a model whose fp16 copy and integer
-graph do not fit one GPU over two processes, and ``--pair`` joins their records.
+``digest``, ``host``, ``gpu`` and ``env`` (``records.environment``).  ``--no-int``/``--no-ref`` split a model whose
+fp16 copy and integer graph do not fit one GPU over two processes, and ``--pair`` joins their records.
 
 Hardware and time: an RTX 2080 Ti (11 GB); OPT-6.7B's fp16 reference needs two (``--ref-gpus 2``), its integer graph
 one (``--no-ref``), and the six tasks take about 11 min for the reference; the build of OPT-6.7B's integer graph takes
@@ -81,12 +81,14 @@ SOURCES = {   # task: (dataset repository, file, revision)
 }
 RECIPES = checkpoints.OPT_RECIPES
 """The integer model's recipes: the certified models' and the first one."""
+# OPT's context: a longer request keeps its last MAX_LENGTH + 1 tokens (the harness's truncation)
 MAX_LENGTH = 2048
 
 
 # ------------------------------------------------------------------ documents
 
 def load_rows(task: str) -> list[dict]:
+    """The task's documents as rows, from the parquet file of :data:`SOURCES` (downloaded from the Hugging Face hub)."""
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download
     repo, name, rev = SOURCES[task]
@@ -133,6 +135,8 @@ def make_docs(task: str, rows: list[dict]) -> list[dict]:
 
 
 def select(task: str, docs: list[dict], hellaswag_n: int, limit: int) -> list[dict]:
+    """The scored documents: HellaSwag's fixed subset of ``hellaswag_n`` (seed 1234, in the dataset's order), then at
+    most ``limit`` of them (0: all)."""
     if task == "hellaswag" and hellaswag_n:
         perm = torch.randperm(len(docs), generator=torch.Generator().manual_seed(1234)).tolist()
         docs = [docs[i] for i in sorted(perm[:hellaswag_n])]
@@ -245,7 +249,8 @@ def split_opt(model, devices: list[str]):
 
 def pair(ref_path: str, int_path: str) -> None:
     """Paired differences between a reference-only run (``--no-int``) and an integer-only run (``--no-ref``) on the
-    same documents: one JSON line per task, as the integer rows of a joint run."""
+    same documents: one JSON line per task with the paired fields of a joint run's integer rows (``acc_ref``,
+    ``acc_int``, ``diff_acc``, ``diff_acc_ci95``, ``same_pick`` and their ``acc_norm`` counterparts)."""
     refs = {r["task"]: r for r in map(json.loads, open(ref_path, encoding="utf-8")) if r["variant"] == "ref"}
     for got in map(json.loads, open(int_path, encoding="utf-8")):
         if got["variant"] != "int" or got["task"] not in refs:

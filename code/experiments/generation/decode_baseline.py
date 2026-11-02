@@ -20,7 +20,7 @@ of them) and scaled-dot-product attention.  The time of a decoder does not depen
 of ``G`` tokens after a ``P``-token prompt is the response ``gen_bench.py`` proves: the prefill of the prompt gives the
 first token (only the last position's logits are computed), then ``G - 1`` decoding steps of one token each read and
 extend the KV cache; every token is the argmax of its logits, on the device.  Per ``G``: one untimed response, then
-``--reps`` timed responses to prompts of random token ids (seed ``--prompt-seed`` and the response's index).  Each
+``--reps`` timed responses, each to a prompt of its own (random token ids drawn with ``--prompt-seed``).  Each
 response's prefill and decoding are timed apart (``experiments.common.records.timed``: CUDA events after a
 synchronisation on a GPU).  The last timed response is also checked against one forward pass of the model over the
 prompt and its first ``G - 1`` tokens (no cache): ``same_as_prefill`` is the share of the ``G`` tokens that pass's
@@ -37,14 +37,14 @@ response beyond the checkpoint's trained context (``P + G - 1`` positions).
 
 **Record** (one JSON line per model and ``G`` on stdout; ``"kind": "decode"``): ``model``, ``real`` (the
 checkpoint; None for random weights), ``layers``, ``n_layers``, ``prompt``, ``gen``, ``dtype``, ``device``,
-``attention``, ``params``, ``weights_bytes``, ``reps``, the medians and ``[min, max]`` of ``prefill_s``, ``decode_s``
+``threads``, ``attention``, ``params``, ``weights_bytes``, ``reps``, the medians and ``[min, max]`` of ``prefill_s``, ``decode_s``
 (the ``G - 1`` steps) and ``total_s`` (both), ``ms_per_token`` (the median ``total_s`` over ``G``),
 ``same_as_prefill``, ``build_s``, ``peak`` (host and GPU memory over the timed responses), ``label``, ``host``,
 ``gpu``, ``git``, ``env`` (with ``--real`` the revisions of the checkpoint and of WikiText-2 in ``sources``), ``ok``
 (every logit finite and ``G`` tokens per response).  The exit status is 1 if a record is not ``ok``.
 
-Hardware and time: the final run's job runs on the L40S (fp16; each 7B model takes 13.5 GB of GPU memory) in a few
-minutes; the package gives it a limit of one hour and 64 GB of host memory.  The laptop check above takes seconds.
+Hardware and time: the run package's job runs on an NVIDIA L40S (fp16; each 7B model takes 13.5 GB of GPU memory) in
+a few minutes; the package gives it a limit of one hour and 64 GB of host memory.  The laptop check above takes seconds.
 ``--real`` adds the checkpoint's download into the Hugging Face cache (Llama-2-7B 13.5 GB, Qwen3-4B 8 GB) and its
 load on the host in ``--dtype`` before it moves to the GPU (a few minutes; host memory about the weights' size, within
 the 64 GB), and the tokenisation of the test split (seconds); the GPU memory and the decoding are those of the

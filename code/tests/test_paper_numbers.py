@@ -5,7 +5,7 @@
   tier and kind, and each builder fills its cells from the right records only -- a real-weight generation record
   never fills a random-weight cell, a baseline-verifier or GPU-verifier V1 record never fills the optimised CPU
   column, an alpha-0.55 quality cell never fills the certified row, and the abstract's N is the 2,048-token ratio.
-* ``--strict`` fails on a missing cell, a failed check or an unparsable line gives exit status 1, and a dry-run
+* ``--strict`` fails on a missing cell; a failed check or an unparsable line gives exit status 1; and a dry-run
   listing gives the job coverage (an incomplete listing is refused).
 * Exact re-execution is the fastest exact variant; llama.cpp is an inexact baseline of another model, which never
   changes the abstract's N, at its fastest configuration; mode C's plan comes from the records; the bounds round up.
@@ -236,7 +236,7 @@ def _bench(root: Path, platform: str = "test") -> None:
             ("llama2-7b", 64, "C", "fs", "_wire_gpuv_stream_prune_pmax2047_polcnn18c", 0.4),
             ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups_pmax2047", 0.7),
             ("llama2-7b", 64, "C", "int", "_wire_prune_pmax2047_polcnn18c", 0.9),   # interactive: not tab:eval-llm's
-            ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups", 5.0)):          # 8-bit: not the final run's
+            ("llama2-7b", 64, "Kpre", "fs", "_wire_prune_lookups", 5.0)):          # 8-bit: not the paper's scale
         hw = "AMD EPYC 9334 32-Core Processor x8 threads"
         for metric, v in (("prove_forward", 1.5 * scale), ("fs_hash", 0.1), ("verify_products", scale),
                           ("bytes_total", 3.25e8 * scale)):
@@ -720,8 +720,9 @@ def test_the_cpu_scaling_the_plans_and_the_security_levels(run_dir):
                                        "AMD EPYC 9334 32-Core Processor x8 threads,32,6738149376,6300000000.0"),
                           encoding="utf-8")
     assert text != lam_tables.read_text(encoding="utf-8")
-    # the claims: a Kpre proof that changes with lambda; codewords of 2^18 points that open more columns than those of 2^16 points (41 against 26); a Kpre
-    # key slower than exact re-execution at 512 tokens; a cpuv verifier without the AVX-512 attention
+    # the claims: a Kpre proof that changes with lambda; codewords of 2^18 points that open more columns than those
+    # of 2^16 points (41 against 26); a Kpre key slower than exact re-execution at 512 tokens; a cpuv verifier
+    # without the AVX-512 attention
     _write(logs, "sp-x-plans-llama2-7b-2k-cnn18c-274.out", [
         dict(perf("llama2-7b", 2048, "C", 25.0, 6.6e9, label="plans"), policy="cnn18c",
              group_columns={"g0_n262144": 41}, commit_s=610.0, setup_cache="off")])
@@ -1017,11 +1018,11 @@ def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
         assert cell == f"main-a{r['smooth']:g}-glus{r['glu_smooth']:g}", model
     body = (PAPER / "sections" / "quality.tex").read_text(encoding="utf-8")
     ext = (PAPER / "sections" / "ext_generation.tex").read_text(encoding="utf-8")
-    assert r"(test) and \LlamaSevenValGap{} (validation) of the best" in body.replace("\n", " ")
-    assert r"of the best among $\alpha$ and balance $\pm0.1$" in body.replace("\n", " ")
+    assert r"(test) and \LlamaSevenValGap{} (validation) of the best ratio" in body.replace("\n", " ")
+    assert r"of the best ratio for $\alpha$ and balance within $\pm0.1$" in body.replace("\n", " ")
     # Llama-2-7B's setting is OpenLLaMA-7B's, chosen on the test split of that model of the same shapes: both texts
     # say where it comes from (without naming the stand-in)
-    assert "fixed before the run (7B's from a same-shape model)" in body.replace("\n", " ")
+    assert "values were fixed in advance (7B's on a model of the same shape)" in body.replace("\n", " ")
     assert "7B takes ($\\alpha=0.55$, balance 0.2) from a licence-free model of its shapes" in ext.replace("\n", " ")
     assert hf_llama.MAIN_SETTINGS["Llama-2-7b-hf"] == hf_llama.MAIN_SETTINGS["open_llama_7b_v2"]
     assert [m for m, _, _, _ in M.LLAMA_GRIDS] == ["meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"]
@@ -1267,8 +1268,8 @@ def test_the_setup_proof_from_the_library_gives_the_fallback():
 
 
 def test_the_stored_attack_documents_regenerate_the_fallback(run_dir):
-    """The attack tier's stored documents (the records behind today's paper) give the fallback's tab:inrange body and
-    the fallback values of the text numbers they define."""
+    """The attack tier's stored documents (``artifacts/results/``) give the fallback's tab:inrange body and the
+    fallback values of the text numbers they define."""
     tmp, logs = run_dir
     ctx, _ = _ctx(tmp, logs)
     tb = T.tab_inrange(ctx)

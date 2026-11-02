@@ -9,7 +9,7 @@ computes the sampler's exact output law and its distance to softmax sampling on 
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Sec. `sec:gen-prefill`'s cost paragraph, `tab:gen` and `tab:gen-full` (final run: Llama-2-7B and Qwen3-4B, a 512-token prompt, `G` in {64, 256}, greedy and sampled, modes C and Kpre, both tamper cells) | `gen_bench.py` (tier `gen`) | `python -m experiments.generation.gen_bench --model llama2-7b --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre --queries 3 --label gen` (and `--model qwen3-4b`) | stdout, one JSON line per `G`, rule and mode (`"kind": "gen"`) |
+| Sec. `sec:gen-prefill`'s cost paragraph, `tab:gen` and `tab:gen-full` (Llama-2-7B and Qwen3-4B, a 512-token prompt, `G` in {64, 256}, greedy and sampled, modes C and Kpre, both tamper cells) | `gen_bench.py` (tier `gen`) | `python -m experiments.generation.gen_bench --model llama2-7b --prompt 512 --gen 64 256 --decode greedy sample --modes C Kpre --queries 3 --label gen` (and `--model qwen3-4b`) | stdout, one JSON line per `G`, rule and mode (`"kind": "gen"`) |
 | Sec. `sec:gen-prefill`'s cost paragraph: GPT-2's prover time per generated token (a greedy 256-token response after a 64-token prompt, modes C and Kpre; the comparison with zkAgent's GPT-2), and its rows of `tab:gen` and `tab:gen-full` | `gen_bench.py` (tier `gen`) | `python -m experiments.generation.gen_bench --model gpt2 --prompt 64 --gen 256 --decode greedy --modes C Kpre --queries 3 --label gen` | stdout (`prove_s / gen`) |
 | Sec. `sec:ext-gen` ("Per-prefix queries"): Llama-2-7B's response with `P = G = 512` proved as one prefill, measured in mode C (`\GenPrefillGB`, `\GenPrefillProveC`, `\GenPrefillVerifyC`; the byte model of the per-prefix proofs must give it within 15%, `\GenPrefillModelWithin`) | `gen_bench.py` (tier `gen`, job `gen-llama2-7b-512`) | `python -m experiments.generation.gen_bench --model llama2-7b --prompt 512 --gen 512 --decode greedy --modes C --queries 3 --label gen` | stdout |
 | Sec. `sec:ext-gen` ("Against unverified generation"): the same responses generated without a proof on the prover's GPU, Hugging Face Transformers' fp16 decoders of the benchmark's shapes with a KV cache (`\GenDecodeLlama`, `\GenDecodeQwen`; the prover over it, `\GenOverDecodeC`, `\GenOverDecodeK`) | `decode_baseline.py` (tier `gen`, job `gen-decode`) | `python -m experiments.generation.decode_baseline --model llama2-7b qwen3-4b --prompt 512 --gen 64 256 512 --reps 5 --label gen` | stdout, one JSON line per model and `G` (`"kind": "decode"`) |
@@ -38,7 +38,7 @@ untimed response, then `--reps` timed ones to random prompts, the prefill and th
 after a synchronisation). The last response is checked against one uncached forward pass (`same_as_prefill`, the
 share of its tokens that pass gives again). Record: `"kind": "decode"`, the settings, the medians and `[min, max]` of
 `prefill_s`, `decode_s` and `total_s`, `ms_per_token`, `same_as_prefill`, the peaks, `ok` (finite logits, `G` tokens).
-The final run's job takes a few minutes on the L40S (13.5 GB of GPU memory per 7B model in fp16).
+The run package's job takes a few minutes on an NVIDIA L40S (13.5 GB of GPU memory per 7B model in fp16).
 
 ### `gen_bench.py`
 
@@ -61,11 +61,11 @@ serves every `G`, since `decoder.with_lm_positions` keeps the weight operations.
   `--prune-last`, `--lookups`, each with a `--no-...` form, `--prob-max 2047` (11-bit attention probabilities),
   `--lam 128`, `--rate 4`, `--setup-cache DIR`; the runtime
   flags `--device`, `--verifier-device`, `--threads` and every implementation option of `pvi.options`.
-* **Records.** One JSON line per cell with `"kind": "gen"`: the settings, `positions`, `accepted` / `queries`, the
+* **Records.** One JSON line per cell with `"kind": "gen"`: the settings, `positions`, `queries` (the timed ones), `accepted` (the timed ones and the warm-up), the
   medians and `[min, max]` of `prove_s` and `verify_s`, per-part timings and bytes, `proof_bytes`,
   `proof_mb_per_token`, `token_rule_s`, `generate_s`, `sampler` (the weight `a` used and `top_k`), `tampers`, `ok`,
   `peak`, `build_peak`, `env`. The exit status is 1 if an honest response was rejected or a tampered one accepted.
-* **Hardware and time.** The final run: an NVIDIA L40S prover and 8 CPU threads for the verifier; the package gives
+* **Hardware and time.** The paper's cells: an NVIDIA L40S prover and 8 CPU threads for the verifier; the package gives
   each 7B model (both lengths, rules and modes) a three-hour job with 192 GB of host memory. Generating the
   responses, without a KV cache, is a large part of the time; it is not part of the proof's cost.
 

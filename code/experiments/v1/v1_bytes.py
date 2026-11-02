@@ -1,10 +1,10 @@
 """V1 against protocol v0 on the same model, query and parameters: proof bytes, prover and verifier times.
 
 Produces ``tab:eval-v1`` (Sec. ``sec:eval-v1``: V1's and v0's proofs, their ratio, and the prover and verifier
-times), V1's real-weight cells (the real OPT and Llama-2-7B rows next to their random-weight twins, and V1's
-1.7x on the real OPT-6.7B in the abstract), ``tab:options``' V1 columns and the V1 verifier's time before and after
-its optimised paths (the run package's ``cpuv`` tier, ``--v1-verifier optimised baseline``; the extended version's
-"1.44 s per block (2.49 s before)" and the 45.4 s of the full Llama-2-7B).
+times), V1's real-weight cells (``tab:eval-real``: the real OPT and Llama-2-7B rows next to their random-weight
+twins), ``tab:options``' V1 columns and the V1 verifier's time with and without its optimised paths on the full
+Llama-2-7B (the run package's ``cpuv`` tier, ``--v1-verifier optimised baseline``; ``\\VOneVerifyLlama`` and
+``\\VOneVerifyLlamaBaseline`` of the extended version).
 
     python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5
     python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 5 \\
@@ -19,14 +19,14 @@ Builds the decoder as ``costs/perf.py`` does (random weights, ``--seed``; the pa
 model; ``--layers`` blocks), commits it in mode C under ``--policy``, runs one v0 query (``run_query``) and measures
 V1's bytes on the same query with :func:`pvi.v1.protocol.cut_proof_bytes` (M1 encoded for real, the other messages
 sized exactly).  ``--full`` also runs the whole V1 query (:func:`pvi.v1.protocol.run_cut_query`, the GKR on the GPU
-in Triton) and checks its bytes; with ``--reps n`` it then times ``n`` queries of each protocol, interleaved on the
-same prompts, after one warm-up.  The protocol settings default to the paper's configuration
-(:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the lean prover and verifier, the last block at
-the last position, mode Kpre's verifier reading the embedding rows itself, 11-bit attention probabilities); V1
-always sends its proof in the compact encoding, and ``--wire`` concerns v0's proof only.  ``--lmax`` (default
-:data:`pvi.v1.cut.LMAX` = 27, the package's and the measured proofs' value) is the GKR instances' target size
-``2^lmax``; an operation larger than that forms an instance of its own, so the record lists every instance's size
-(``instance_bits``).
+in Triton) and checks its bytes; with ``--reps n`` (``n > 1``) it then times ``n`` queries of each protocol,
+interleaved on the same prompts, the untimed query above serving as the warm-up.  The protocol settings default to
+the paper's configuration (:data:`experiments.common.cli.PAPER`: plan ``cnn18c``, Fiat--Shamir, the lean prover and
+verifier, the last block at the last position, mode Kpre's verifier reading the embedding rows itself, 11-bit
+attention probabilities); V1 always sends its proof in the compact encoding, and ``--wire`` concerns v0's proof only.
+``--lmax`` (default :data:`pvi.v1.cut.LMAX` = 27, the package's and the measured proofs' value) is the GKR instances'
+target size ``2^lmax``; an operation larger than that forms an instance of its own, so the record lists every
+instance's size (``instance_bits``).
 
 **Checks.** Every line checks the byte accounting (``accounting``, ``accounting_ok``): v0's ``u`` and opened columns
 (and, off the wire, its claims) are :func:`pvi.commit.cost.proof_bytes` of the graph's weight ops exactly, with the
@@ -41,7 +41,7 @@ status 1.
 
 **V1's verifier.** ``--v1-verifier`` takes one or more of :data:`pvi.options.V1_VERIFIERS`: ``optimised`` (the
 window-table products, the batched GKR check and the batch-inverted logUp identity; the default) and ``baseline``
-(float64 limb products, one check per instance: the verifier before those changes).  The untimed V1 query, the byte
+(float64 limb products, one check per instance: the straightforward verifier).  The untimed V1 query, the byte
 sizing and the tamper queries run under ``optimised`` when it is listed (else the first one given); with ``--full
 --reps n`` every listed verifier checks the same timed queries, after one warm-up each (``timed.v1_paths``, by name;
 ``timed.v1`` is ``timed.v1_path``'s).  Both verifiers give the same verdicts on the same bytes.
@@ -49,14 +49,14 @@ sizing and the tamper queries run under ``optimised`` when it is listed (else th
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): every block of the checkpoint's integer graph
 (:func:`experiments.common.checkpoints.real_graph`), or with ``--layers n`` its first ``n`` blocks with the same
 calibration and prefix, the full graph's first ``n`` (:mod:`experiments.common.real_cells`; planned and sized for the
-whole model, as a random-weight build), queried on WikiText-2 test windows of ``--seq`` tokens.  OPT:
-the certified recipe (``hf_opt.CERTIFIED_RECIPE``, calibrated on four 2,048-token train windows) by default, or with
-``--recipe legacy`` the percentile recipe (norm gain 4, ``--smooth``: SmoothQuant through the norm gains, calibrated on one
-window of ``--calib-seq`` tokens from the end of the test split); a Llama-family checkpoint: ``hf_llama.MAIN_RECIPE``
-with its fixed public prefix.  ``--codec-only``: no commitment and no proof -- one forward pass (``--device``) whose
-claims are encoded op by op as they are produced (v0: ``PVC3`` of the claims; V1: of the cut ops' requantised values
-and the other ops' claims, and the exceptions frame), summed per block: the byte profile of a model whose prover the
-machine cannot hold.
+whole model, as a random-weight build), queried on WikiText-2 test windows of ``--seq`` tokens.  OPT: the certified
+recipe (``hf_opt.CERTIFIED_RECIPE``, calibrated on four 2,048-token train windows) by default, or with ``--recipe
+legacy`` the percentile recipe (norm gain 4, ``--smooth``: SmoothQuant through the norm gains, calibrated on one
+window of ``--calib-seq`` tokens from the end of the test split); a Llama-family checkpoint:
+``hf_llama.MAIN_RECIPE`` with its fixed public prefix.  ``--codec-only``: no commitment and no proof -- one forward
+pass (``--device``) whose claims are encoded op by op as they are produced (v0: ``PVC3`` of the claims; V1: of the
+cut ops' requantised values and the other ops' claims, and the exceptions frame), summed per block: the byte profile
+of a model whose prover the machine cannot hold.
 
 **Record** (one JSON line per mode, on stdout): ``label``, ``git``, ``model``, ``real``, ``smooth``, ``recipe``,
 ``calib_seq``, ``layers``, ``seq``, ``prune_last``, ``prob_max`` (the graph's attention probabilities' scale:
@@ -68,9 +68,10 @@ machine cannot hold.
 ``v0_bytes`` and ``v1_bytes`` (per message), ``v0_total``, ``v1_total``,
 ``ratio``, ``n_leaves``, ``n_instances``, ``instance_bits``, ``table``, ``n_exceptions``, ``reps``, ``columns``,
 ``setup_s``, ``setup_cache``, ``v0_query_s``, ``v1_bytes_s``; with ``--full`` ``v1_full`` (verdict, bytes, timings,
-the transcript digest, and the GKR's memory path ``gkr_memory``: ``--gkr-memory``), ``timed`` (``queries``; ``v0``, ``v1`` and ``v1_paths``: the per-part medians, ``prove_s`` /
-``verify_s`` with their ``[min, max]`` over the queries' own totals, ``fs_s``, and every query's own values
-``prove_s_all``, ``verify_s_all``, ``timings_all`` and ``transcripts``) and ``tampers``; ``accounting``, ``accounting_ok``, ``peak``.
+the transcript digest, and the GKR's memory path ``gkr_memory``: ``--gkr-memory``), ``timed`` (``queries``; ``v0``,
+``v1`` and ``v1_paths``: the per-part medians, ``prove_s`` / ``verify_s`` with their ``[min, max]`` over the queries'
+own totals, ``fs_s``, and every query's own values ``prove_s_all``, ``verify_s_all``, ``timings_all`` and
+``transcripts``) and ``tampers``; ``accounting``, ``accounting_ok``, ``peak``.
 With ``--codec-only`` one line with ``codec_only``, ``blocks`` and ``total`` instead.
 
 Hardware and time: the paper's cells ran on an NVIDIA L40S (48 GB) prover with 8 CPU threads for the verifier.  A
@@ -197,11 +198,11 @@ def _blocks(graph, n_layers: int) -> dict:
 def codec_profile(graph, x: torch.Tensor, n_layers: int, lmax: int, device) -> dict:
     """The claims of one forward pass on ``x``, encoded op by op as the pass produces them (no commitment, no
     proof), summed per block: entries and raw bytes (4 each), v0's ``PVC3`` bytes, V1's (the requantised values of
-    the ops cut without a commitment plan, as in mode Kpre -- ``CutPlan.from_graph`` without col matrices, P4 from
-    the graph's weights -- and the other ops' claims) and the cut ops' exceptions; the totals add V1's exceptions
-    frame (``PVX1``).  Each op is encoded on its own (its own header, Rice parameters and exception list), so the
-    sums differ slightly from one encoding of all the claims, which a protocol line (without ``--codec-only``) gives
-    exactly."""
+    the ops cut without a commitment plan, as in mode Kpre -- ``CutPlan.from_graph`` without column matrices, (P4)
+    evaluated from the graph's weights -- and the other ops' claims) and the cut ops' exceptions; the totals add V1's
+    exceptions frame (``PVX1``).  Each op is encoded on its own (its own header, Rice parameters and exception
+    list), so the sums differ slightly from one encoding of all the claims, which a protocol line (without
+    ``--codec-only``) gives exactly."""
     from pvi.v0 import claimcodec
     from pvi.v1 import cut as cutmod
     from pvi.v1.protocol import pack_exceptions

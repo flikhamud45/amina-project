@@ -1,9 +1,8 @@
 #!/bin/bash
 # The timing shims of run_zkllm.sh and of the stored runs (written for these runs, not part of zkLLM).
-# Run inside a built zkLLM checkout
-# (commit 993311e). Each binary of the loop below (ppgen, commit-param and the four proof binaries) X
-# is renamed X.real and replaced by a script that runs it under /usr/bin/time and appends one line to
-# $ZK_TIMELOG (default: bin_times.log next to the binaries):
+# Run inside a built zkLLM checkout (commit 993311e). Each binary X of the loop below (ppgen, commit-param and the
+# four proof binaries) is renamed X.real and replaced by a script that runs it under /usr/bin/time and appends one
+# line to $ZK_TIMELOG (default: bin_times.log next to the binaries):
 #     BIN <name> <wall s> s  maxrss <KB> KB  exit <code>  args <arguments>
 # zkLLM's Python scripts call ./X, so they are timed unchanged. `touch` keeps make from rebuilding.
 set -euo pipefail

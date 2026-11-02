@@ -128,8 +128,8 @@ class WireProof:
 
 def device_claim_budget(prover: Prover, x: torch.Tensor) -> int | None:
     """The bytes of int32 claims of query ``x`` that a lean GPU prover with the compact encoding keeps on its GPU
-    before it stages the rest in pinned host memory (the option ``host_claims``), or ``None``: all on the GPU, as
-    before the option.  ``device``: ``None``; ``host``: 0 (every claim staged); ``auto``: ``None`` when the claims of
+    before it stages the rest in pinned host memory (the option ``host_claims``), or ``None``: all on the GPU.
+    ``device``: ``None``; ``host``: 0 (every claim staged); ``auto``: ``None`` when the claims of
     every weight op, the weights (which the forward pass keeps on the GPU) and ``host_claims_reserve`` GiB fit in the
     GPU's memory, else the GPU's memory less the weights and the reserve, so that only the claims beyond it are
     staged (the full Llama-2-7B at 8,192 tokens on a 44.5 GiB L40S: 40.6 GiB of claims, 6.3 GiB of weights, 32.2 GiB
@@ -494,7 +494,7 @@ def run_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: int 
     formats of :mod:`pvi.v0.streaming`), then checks them with :meth:`Verifier.verify_streaming`:
     the same verdict and label, its overlapped work timed as one ``verify_total``.  An accepted
     query has the same proof bytes and Fiat--Shamir transcript; a rejected one has also received
-    (counted, and absorbed) the messages this function no longer asks for once a check fails --
+    (counted, and absorbed) the messages this function stops asking for once a check fails --
     in mode C, ``u`` and the openings -- so the transcript here is a prefix of the streaming one.
 
     ``wire=True`` sends the proof in the compact encoding of :mod:`pvi.v0.claimcodec`: the

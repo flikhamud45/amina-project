@@ -5,7 +5,7 @@ Standard static quantisation, chosen to be exactly reproducible by a verifier:
 * weights: symmetric int8, one scale per output channel;
 * activations: symmetric int8, one scale per tensor, calibrated as the 99.99th
   percentile of ``|a|`` on a calibration batch;
-* bias: an integer below ``2**26`` at the product scale ``s_in * s_w[c]``;
+* bias: an integer of magnitude at most ``2**26`` at the product scale ``s_in * s_w[c]``;
 * requantisation: ``clamp((z * m_c + 2**29) >> 30)`` with an integer multiplier
   ``m_c = round(2**30 * s_in * s_w[c] / s_out)`` -- the usual fixed-point rule,
   identical on every device;
@@ -31,7 +31,7 @@ __all__ = ["SHIFT", "CNNBuilder", "quantize_model", "quantize_input", "dequantiz
 
 SHIFT = 30
 BIAS_MAX = 1 << 26
-"""Integer biases are kept below ``2**26``: a channel whose folded bias would be
+"""Integer biases are kept within ``+-2**26``: a channel whose folded bias would be
 larger (BatchNorm with a tiny gain) gets a coarser weight scale instead.  With
 |W x| <= 127 * 127 * K this keeps every honest claim well inside the protocol's
 range check (:data:`pvi.v0.params.Z_BOUND` ``= 2**29``; :func:`pvi.v0.graph_commitment.commit_graph` checks the
@@ -75,6 +75,7 @@ def _mult(ratio) -> torch.Tensor:
 
 
 def fold_bn(conv: nn.Conv2d, bn: nn.BatchNorm2d | None):
+    """The float64 weight and bias of ``conv`` with the eval-mode BatchNorm ``bn`` (if any) folded into them."""
     w = conv.weight.detach().double()
     b = conv.bias.detach().double() if conv.bias is not None else torch.zeros(w.shape[0], dtype=torch.float64)
     if bn is not None:
@@ -95,6 +96,9 @@ class _T:
 
 
 class CNNBuilder:
+    """Builds the integer graph op by op while it runs the float model on the calibration batch
+    (:func:`quantize_model`)."""
+
     def __init__(self, x_cal: torch.Tensor) -> None:
         self.ops: list = []
         self._n = 0

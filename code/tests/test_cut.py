@@ -19,7 +19,8 @@ from pvi.core.graph import CheapOp, mul_add_half, requant, requant_fn
 from pvi.models.decoder import RES_MAX, SHIFT, build_decoder, with_lm_positions
 from pvi.v1 import cut
 
-# W from 2 to 2^16, powers of two, and W = floor / W + 1 = ceil
+# multipliers m whose window widths (floor(2^30 / m) and the next integer) run from 2 to 2^16: powers of two,
+# their neighbours and others
 MULTS = [1 << 29, (1 << 29) - 1, 1 << 14, (1 << 14) + 1, 1 << 20, (1 << 30) // 3, 12345679, 87654321]
 
 _TINY = {"gpt": shapes.GPT, "llama": shapes.LLAMA, "opt": shapes.OPT_PROJ}

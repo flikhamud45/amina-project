@@ -1,6 +1,6 @@
-# Pinned dependencies for the pvi package.
+# Pinned dependencies of the pvi package, its tests and the attack on MNIST.
 #
-# Versions are the ones the paper's results were produced with.
+# Versions are the ones the paper's results were produced with (SciPy: any version from 1.13).
 # CUDA-specific torch builds carry a local tag (e.g. 2.5.1+cu121) that is
 # stripped here so the file installs anywhere; on a CUDA machine install
 # the matching CUDA build first, e.g.

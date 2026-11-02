@@ -1,6 +1,7 @@
 \providecommand{\para}[1]{\par\noindent\textbf{#1}\quad}
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
 \providecommand{\sC}{\mathsf{C}}
+\providecommand{\sK}{\mathsf{K}}
 \providecommand{\Kpre}{\mathsf{K}_{\mathrm{pre}}}
 
 \section{Introduction}
@@ -10,7 +11,7 @@ Open-weight language models are often served by a provider the client does not c
 may serve a cheaper model, or alter the computation on chosen queries to return answers of its
 choice. We target a client that has no GPU, does not store the weights, and holds only the 32-byte
 Merkle roots of the weights (mode~$\sC$) or a \KpreStoreGB{}\,GB secret key derived once from the weights
-(mode~$\Kpre$). In a \emph{proof of inference}, the provider sends a proof with each answer, and
+(mode~$\Kpre$; mode~$\sK$ if it keeps the weights). In a \emph{proof of inference}, the provider sends a proof with each answer, and
 the client's check fails with high probability unless the agreed model computed the answer on this
 input. The agreed model is an exact int8 network derived from the public
 fp16 checkpoint by a deterministic, public quantisation recipe with fixed calibration data, so
@@ -35,80 +36,82 @@ catches a single changed node with probability at most $1/N$ in a layer of width
     \includegraphics[width=0.47\columnwidth]{figures/overview_attack.pdf}}\hfill
   \subfloat[Defence: caught except with probability $2^{-\lambda}$]{%
     \includegraphics[width=0.47\columnwidth]{figures/overview_defence.pdf}}
-  \caption{One tampered neuron whose later layers are recomputed honestly slips past a random path
-  (a) but not past a check of every layer (b)}
+  \caption{A tampered neuron with later layers recomputed honestly passes a random path (a) but not
+  our check of every layer (b).}
   \label{fig:overview}
 \end{figure}
 
 \para{The attack.} The provider needs no other model: it overwrites the value of one neuron and
 recomputes every later layer honestly with the true weights. The trace is then inconsistent at one
 site, which a random path visits with probability $1/N$ (Figure~\ref{fig:overview}). On the real
-OPT-6.7B, editing one feed-forward neuron changed the next token for \AttackOptLSucceeded{} of \AttackOptLPrompts{} prompts, with values
-outside the neurons' natural ranges; on OPT-1.3B and OPT-6.7B, editing a few neurons within ranges
-calibrated on held-out text does the same. On triggered inputs only, it is a backdoor that leaves the
-committed weights clean. On a dog-vs-cat ResNet-18, one changed neuron flips every test query and
-passes a path with probability \PathPassResNet{}, refuting the full soundness that Anchuri et al.\ state
-for binary classifiers. More paths do not help at a useful cost: detection with probability
-$1-2^{-40}$ on Llama-2-7B takes about \PathsLlamaAbout{} paths.
+OPT-6.7B, editing one feed-forward neuron changes the next token for \AttackOptLSucceeded{} of
+\AttackOptLPrompts{} prompts, with values outside the neurons' natural ranges; on OPT-1.3B and OPT-6.7B, editing a few neurons within ranges
+calibrated on held-out text does the same. Applied to triggered inputs only, the edit is a backdoor
+that leaves the committed weights clean. On a dog-vs-cat ResNet-18, one changed neuron flips every
+test query and passes a path with probability \PathPassResNet{}, refuting the full soundness that
+Anchuri et al.\ state for binary classifiers. More paths do not help at a useful cost: detection
+with probability $1-2^{-40}$ on Llama-2-7B takes about \PathsLlamaAbout{} paths per query.
 
-\para{A lower bound for spot-checking.} After honest recomputation, the forged trace is the honest
-trace of a model that differs from the committed one in one weight row. If the other rows carry no
-information about the edit's location, a verifier with $q$ queries per layer to a commitment whose
-symbols each depend on at most $d$ rows rejects the forgery at most as often as it could guess the
-edited site in $qd$ tries, even if it is adaptive and reads the whole trace
-(Theorem~\ref{thm:guess}). For every such verifier, some ReLU MLP with a hidden layer of width
+\para{A lower bound for spot-checking.} The attack is not specific to the path protocol. After
+honest recomputation, the forged trace is the honest trace of a model that differs from the
+committed one in one weight row. Consider a verifier that makes $q$ queries per layer to a
+commitment whose symbols each depend on at most $d$ rows ($d=1$ when it opens single neurons). If
+the other rows carry no information about the edit's location, it rejects the forgery at most as
+often as it could guess the edited neuron in $qd$ tries, even if it is adaptive and reads the whole
+trace (Theorem~\ref{thm:guess}). For every such verifier, some ReLU MLP with a hidden layer of width
 $N$ admits a single-neuron forgery, with every value in its natural range, that passes with
-probability at least $1-qd/N$; for transformers our evidence is the measured edits above
-(Remark~\ref{rem:scope}). Conversely, symbols that mix all rows, such as Reed--Solomon
-columns, reach $2^{-\lambda}$ with $O(\lambda)$ queries per layer (Theorem~\ref{thm:dich}), and
-symbols that mix blocks of $d$ rows with $O(\lambda+\log L)$ queries per block for $L$ layers
-(Section~\ref{sec:dichotomy}). Of
-nine published schemes for verifying inference (Table~\ref{tab:sok}), most meet the probabilistic
-guarantees they state; we do not call them broken. Apart from the binary-classifier claim, the only
-gap is in TensorCommitments~\cite{tensorcommitments}, whose stated goal of negligible soundness is
-not achieved by its weight-only layer selection. We disclosed these findings to the authors
-\todo{only once the notices of 15--19 Oct are sent; else delete}.
+probability at least $1-qd/N$;
+for transformers our evidence is the measured edits above (Remark~\ref{rem:scope}). Conversely,
+symbols that mix all rows, such as Reed--Solomon columns, reach error $2^{-\lambda}$ with
+$O(\lambda)$ queries per layer (Theorem~\ref{thm:dich}). Of the nine published schemes in
+Table~\ref{tab:sok}, most meet the probabilistic guarantees they state; we do not call them broken. Apart from the binary-classifier claim, the only gap is in
+TensorCommitments~\cite{tensorcommitments}, whose stated goal of negligible soundness is not achieved
+by its weight-only layer selection. We disclosed these findings to the authors
+\todo{keep only once the notices are sent}.
 
-\para{A defence that checks everything.} Since no spot-checking verifier beats uniform sampling in the worst case,
-ours checks every weight operation. The provider runs the exact int8 model, bit-identical on its GPU
-and on the client, and sends every weight operation's result. The verifier recomputes every
-operation without weights, including attention, from checked values, and tests each weight operation
-with random linear combinations of its output rows (Freivalds' algorithm~\cite{freivalds1977}). In
-mode~$\sC$ it checks each combination against a Reed--Solomon-encoded, Merkle-committed copy of the
-weights. This is the evaluation protocol of a linear-code polynomial commitment, as in Ligero and
-Brakedown~\cite{ligero,brakedown}, applied to every matrix product of the model. A tampered value
-anywhere is caught except with probability $2^{-\lambda}$, using only a hash function and a linear
-code: no SNARK, trusted hardware or trusted setup.
+\para{A defence that checks everything.} Since no spot-checking verifier beats uniform sampling in
+the worst case, ours checks every weight operation. The provider runs the exact int8 model,
+bit-identical on its GPU and on the client, and sends every weight operation's result. The verifier
+recomputes every operation without weights, including attention, from checked values, and tests
+each weight operation with random linear combinations of its output rows (Freivalds'
+algorithm~\cite{freivalds1977}). In mode~$\sC$ it checks each combination against a
+Reed--Solomon-encoded, Merkle-committed copy of the weights: the evaluation protocol of a
+linear-code polynomial commitment, as in Ligero and Brakedown~\cite{ligero,brakedown}, applied to
+every matrix product of the model. A tampered value anywhere is caught except with probability
+$2^{-\lambda}$, using only a hash function and a linear code: no SNARK, trusted hardware or trusted
+setup. In mode~$\Kpre$ the client instead keeps secret combinations of the weight rows, precomputed
+once.
 
-We add four extensions: a one-time setup proof that amortises the commitment's testing phase when
-the client cannot recompute $C_M$ (Section~\ref{sec:setup-proof}); a Fiat--Shamir transcript that
+We add four extensions: a one-time setup proof for clients that cannot recompute $C_M$
+(Section~\ref{sec:setup-proof}); a Fiat--Shamir transcript that
 binds every constant of the computation (Section~\ref{sec:fs}); generated responses proved as one
 prefill, each token checked as the greedy choice or that of an exact integer sampler keyed by the
 client's seed (Section~\ref{sec:gen}); and V1, which sends int8 values instead of 32-bit results
 and reuses the column check (Section~\ref{sec:v1}).
 
-\para{Costs.} Without V1, the prover's folds and openings do not grow with the prompt.
-On one \PlatformGpu{} it proves a 2{,}048-token Llama-2-13B prompt \ZkllmProverFactor{}$\times$ faster than zkLLM on an A100,
-although zkLLM also hides the weights and proves the operations without weights\TodoZkllmFactor{}. On one GPU, proving a 2{,}048-token OPT-1.3B prompt costs \ServeOptMOverUOneRange{}$\times$ our exact integer
-forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16 one. The main cost is the proof, which carries every weight
-operation's result: \ProofLlamaLongC{} for a 2{,}048-token Llama-2-7B prompt, about the size of its int8
-weights. V1 makes it \VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens (\VOneRatioRealOptL{}$\times$ for
-OPT-6.7B), but slows the prover. With native exact kernels, a CPU client in
-mode~$\Kpre$, holding a \KpreStoreGB{}\,GB key instead of the \WeightsLlama{} of weights, verifies a 2{,}048-token
-Llama-2-7B prompt in \CpuVerifyLong{}\,s, no longer than exact re-execution on the same CPU takes with the weights
-(non-interactive, full model), and its lead grows with the prompt; on a GPU, re-execution is
-faster\TodoCpuRatioIntro{}. The protocol is not zero-knowledge, so it targets open-weight models, as do
-CommitLLM~\cite{commitllm2026} and Gupta et al.~\cite{gupta2026private}.
+\para{Costs.} On a 2{,}048-token Llama-2-7B or 13B prompt, our prover is \ZkllmSameGpuFactorRange{}$\times$
+faster than zkLLM's on the same \PlatformGpu{}, although zkLLM also hides the weights and proves the
+operations without weights\TodoZkllmFactor{}; it is also faster than every other fully sound system
+we compare with (Table~\ref{tab:eval-compare}). Proving a 2{,}048-token OPT-1.3B prompt costs
+\ServeOptMOverUOneRange{}$\times$ our exact integer forward pass and \ServeOptMOverUTwoRange{}$\times$ an fp16
+one. The main cost is the proof, which carries every weight operation's result:
+\ProofLlamaLongC{} for a 2{,}048-token Llama-2-7B prompt, whose int8 weights take \WeightsLlama{}.
+V1 makes it \VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens but slows the prover. With native exact
+kernels, a CPU client in mode~$\Kpre$, holding a \KpreStoreGB{}\,GB key, verifies such a prompt in \CpuVerifyLong{}\,s, against
+\CpuReexecLong{}\,s for exact re-execution with the weights on the same CPU (non-interactive, full
+model); on a GPU, re-execution is faster\TodoCpuRatioIntro{}. The protocol is not zero-knowledge, so it
+targets open-weight models, as do CommitLLM~\cite{commitllm2026} and Gupta et
+al.~\cite{gupta2026private}.
 
 \para{Contributions.}
 \begin{itemize}
-  \item An attack on spot-checking proofs of inference, a single-site edit followed by honest
-  recomputation, measured on image classifiers and OPT-6.7B (Section~\ref{sec:attack}).
-  \item A lower bound for spot-checking verifiers, met up to a factor $O(\lambda+\log L)$ at every locality, applied to nine
-  published schemes (Sections~\ref{sec:sampling}--\ref{sec:sok}).
+  \item An attack on spot-checking proofs of inference: a single-site edit followed by honest
+  recomputation (Section~\ref{sec:attack}).
+  \item A lower bound for spot-checking verifiers, matched up to a factor $O(\lambda+\log L)$
+  at every locality by checks that mix rows, and its application to nine published schemes
+  (Sections~\ref{sec:sampling}--\ref{sec:sok}).
   \item A fully sound Freivalds-based protocol that needs only a hash function and a linear code,
-  with binding Fiat--Shamir, generation, V1 and a setup proof for untrusted commitments
-  (Sections~\ref{sec:defence}--\ref{sec:gen}).
+  and its four extensions (Sections~\ref{sec:defence}--\ref{sec:gen}).
   \item An evaluation on language models up to 13B parameters, against re-execution and published
   systems (Section~\ref{sec:results}).
 \end{itemize}
@@ -129,8 +132,8 @@ commits no activation.
 \para{Spot-checking and sampling.} Table~\ref{tab:sok} describes sampling schemes whose verifiers
 fall in the class of
 Definition~\ref{def:spot}~\cite{anchuri2026verifiable,slp,commitllm2026,tensorcommitments,nanozk,spex,immaculate,toploc,svip}.
-Optimistic schemes~\cite{verde,opml,tao} accept an answer unless a party that re-runs the model
-disputes it, so they need an honest party that re-runs every query. The calculation behind the
+Optimistic schemes~\cite{verde,opml,tao} need an honest party that re-runs every query and
+disputes wrong answers. The calculation behind the
 edit-then-recompute attack is classical: it underlies proofs of retrievability and data
 possession~\cite{juels2007por,ateniese2007pdp}, spot-checkers~\cite{ergun2000spotcheckers} and PCPs
 of proximity, which certify only closeness, whereas holographic proofs encode their
@@ -165,5 +168,5 @@ replace sampling, which needs at least $(1-\varepsilon)N$ paths per layer for so
 a check of every weight operation. Each fully sound protocol above that avoids a SNARK needs more
 than a commitment: trusted hardware, a stored encoded copy of the weights, a weight-derived secret
 or data generated with secret randomness. To our knowledge, ours is the first Freivalds-based proof
-of inference that is fully sound for complete transformers, with attention recomputed by the verifier from checked values, whose
-client (in mode~$\sC$) needs none of these; the novelty is this combination, not a new primitive.
+of inference that is fully sound for complete transformers, attention included, and whose client
+(in mode~$\sC$) needs none of these; the novelty is this combination, not a new primitive.

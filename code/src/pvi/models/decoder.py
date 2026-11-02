@@ -10,7 +10,8 @@ models built from the checkpoints, with the same graph, are :mod:`pvi.models.hf_
 
 Integer semantics (both parties compute these identically):
 
-* residual stream: int32; each branch output is requantised into it and added;
+* residual stream: integers clamped to ``+-RES_MAX`` (``2**22 - 1``); each branch output is requantised into
+  it and added;
 * LayerNorm / RMSNorm: integer mean, integer square root, integer division;
 * GELU / ReLU / SiLU: 256-entry look-up tables on int8 inputs;
 * SwiGLU gate: int8 x int8 product, requantised;
@@ -63,9 +64,9 @@ PROB_MAX = 255
 the attention op, which the graph digest binds (:func:`prob_max_of` reads it from a graph)."""
 CERTIFIED_PROB_MAX = 2047
 """The probabilities' scale of the certified models built from real checkpoints
-(:func:`pvi.models.hf_opt.build_opt_from_hf`, :func:`pvi.models.hf_llama.build_llama_from_hf`): 11 bits.  Measured on
-the full WikiText-2 (raw) test split in 2,048-token windows, 8-bit probabilities raise the perplexity by 2.4% on
-OPT-6.7B and by 5.5% on OPT-1.3B, while 11-bit ones reach the perplexity of the exact softmax.  The cost measurements
+(:func:`pvi.models.hf_opt.build_opt_from_hf`, :func:`pvi.models.hf_llama.build_llama_from_hf`): 11 bits.  On
+2,048-token windows a rounded 8-bit row loses much of a diffuse row's probability mass and raises the perplexity,
+which 11 bits avoid (Sec. ``sec:quality``; :func:`pvi.models.hf_opt.probability_mass`).  The cost measurements
 build their random-weight graphs at this scale too (``experiments.common.cli.Protocol.prob_max``; the 8-bit graphs
 with ``--prob-max 255``).  The scale changes no shape and no bound of the exact integer paths: every one holds for
 ``pmax <= 2047`` and ``T < 2**15`` (:func:`_int32_scores`, :func:`_attention_core`, the native and Triton kernels)."""
@@ -76,6 +77,8 @@ _LUT_MAX = 1 << 22
 
 @dataclass(frozen=True)
 class DecoderConfig:
+    """The shape of a decoder-only transformer: widths, depth, heads, vocabulary and its architectural choices."""
+
     name: str
     d_model: int
     n_layers: int
@@ -469,8 +472,8 @@ def with_lm_positions(graph: IntGraph, n: int) -> IntGraph:
     at position ``T - n + j`` are those that ``graph`` gives on the prefix ``x[:, :T - n + j + 1]``.  A
     query is then a prompt followed by the ``n - 1`` tokens generated after it, proved as one prefill:
     ``meta["lm_positions"] = n`` makes the verifier check that each of those tokens is the greedy choice
-    of the logits before it (:meth:`pvi.v0.verifier.Verifier.check_tokens`), and the last logits give token
-    ``n``."""
+    (or, with a sampler, the seeded sampler's choice: :mod:`pvi.v0.token_sampler`) of the logits before it
+    (:meth:`pvi.v0.verifier.Verifier.check_tokens`), and the last logits give token ``n``."""
     if n < 1:
         raise ValueError("at least one position")
     ops = [dataclasses.replace(op, fn=op_fn(last_positions_op, n=n))

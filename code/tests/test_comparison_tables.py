@@ -148,7 +148,7 @@ def test_counts_can_keep_the_definition_cells_only():
 
 
 def test_the_stored_counts_are_the_papers():
-    """The defining cells of the stored runs of the base implementation give the counts the paper prints today
+    """The defining cells of the stored runs of the base implementation give the counts the paper prints
     (``paper_sp2027/fallback/numbers.tex``: 3,792 honest queries, 2,512 attacks; 1,601, 853, 56 and 2 by check)."""
     roots = [BENCH / f"raw_{n}" for n in STORED_RUNS]
     if not all((r / "PLATFORM.json").exists() for r in roots):

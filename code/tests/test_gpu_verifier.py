@@ -333,7 +333,7 @@ def test_int8_gemm_is_checked_once_per_gpu_and_falls_back_when_it_fails(monkeypa
     g = torch.Generator().manual_seed(2)
     a, b = _rand(g, -128, 128, (24, 64)).to(torch.int8), _rand(g, -128, 128, (64, 16)).to(torch.int8)
     assert torch.equal(fld.int8_gemm(a.cuda(), b.cuda()).cpu(), (a.double() @ b.double()).to(torch.int32))
-    assert fld._INT8[key] is False and not fld.int8_ok(key)          # the products use float64 from now on
+    assert fld._INT8[key] is False and not fld.int8_ok(key)          # its later products use float64
 
 
 # -- a GPU verifier's constants ---------------------------------------------------------------

@@ -7,17 +7,16 @@ prover's and the verifier's times, the verifier's two implementations phase by p
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| `tab:eval-v1` (V1 and v0 proofs, ratio, prover and verifier times); the abstract's and Sec. `sec:eval-v1`'s V1 ratio at 2,048 tokens on the real checkpoints (`--real`, by the run
-package's rule); the extended version's `tab:v1` (the GKR's share of the prover) | `v1_bytes.py` (tier `v1`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5` (and GPT-2 at 64 and 512, OPT-125M, OPT-1.3B, OPT-6.7B at 64 and 2,048, Llama-2-13B, Qwen3-4B) | stdout, one JSON line per mode |
-| `tab:options`' V1 columns (V1's byte ratio and its CPU verifier against v0's); the body's "45.4 s against v0's 19.6 s" for the full Llama-2-7B; the extended version's "1.44 s per block (2.49 s before)" | `v1_bytes.py --v1-verifier optimised baseline` (tier `cpuv`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 5 --v1-verifier optimised baseline --label cpuv-v1` (and `--seq 64`, Qwen3-4B) | stdout (`timed.v1_paths`) |
+| `tab:eval-v1` (V1 and v0 proofs, ratio, prover and verifier times); Sec. `sec:eval-v1`'s V1 ratio at 2,048 tokens on the real checkpoints (`--real`, by the run package's rule); the extended version's `tab:v1` (the GKR's share of the prover) | `v1_bytes.py` (tier `v1`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre C --full --reps 5` (and GPT-2 at 64 and 512, OPT-125M, OPT-1.3B, OPT-6.7B at 64 and 2,048, Llama-2-13B, Qwen3-4B) | stdout, one JSON line per mode |
+| `tab:options`' V1 columns (V1's byte ratio and its CPU verifier against v0's); V1's CPU verifier on the full Llama-2-7B with and without its optimised paths, and v0's on the same queries (`\VOneVerifyLlama`, `\VOneVerifyLlamaBaseline`, `\VOneVZeroVerifyLlama`) | `v1_bytes.py --v1-verifier optimised baseline` (tier `cpuv`) | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 5 --v1-verifier optimised baseline --label cpuv-v1` (and `--seq 64`, Qwen3-4B) | stdout (`timed.v1_paths`) |
 | where the V1 verifier's time goes (the per-phase breakdown behind the numbers above) | `v1_phases.py` | `python -m experiments.v1.v1_phases --model llama2-7b --layers 2 --seq 2048 --mode Kpre --reps 3 --device cuda` | stdout, one JSON line per verifier and a table |
 | V1 with the GPU verifier at 2,048 tokens (tier `gpuv`) | `v1_bytes.py --verifier-device cuda` | `python -m experiments.v1.v1_bytes --model llama2-7b --seq 2048 --modes Kpre --full --reps 3 --verifier-device cuda --label gpuv-v1` | stdout |
-| V1 on real weights: the abstract's "1.7x on the real OPT-6.7B", `tab:eval-real`'s V1 column, the real OPT-125M's 1.68x / 1.77x (`ext_v1.tex`) | `v1_bytes.py --real` (tier `real`) | `python -m experiments.v1.v1_bytes --model opt-6.7b --real facebook/opt-6.7b --seq 2048 --modes Kpre --full --reps 3 --tampers 3 --label real`, and the same without `--real` (`--label real-random`) | stdout |
+| V1 on real weights: `tab:eval-real`'s V1 column and the real OPT-6.7B's V1 ratio in modes Kpre and C (`\VOneRatioRealOptLExact`, `\VOneRatioRealOptLCExact`) | `v1_bytes.py --real` (tier `real`) | `python -m experiments.v1.v1_bytes --model opt-6.7b --real facebook/opt-6.7b --seq 2048 --modes Kpre --full --reps 3 --tampers 3 --label real`, and the same without `--real` (`--label real-random`) | stdout |
 | the byte profile of a model whose prover the machine cannot hold | `v1_bytes.py --codec-only` | `python -m experiments.v1.v1_bytes --model opt-6.7b --real facebook/opt-6.7b --seq 2048 --codec-only --device cpu` | stdout (`blocks`, `total`) |
 | `tab:eval-v1-long`'s full-model column, V1's claims ratio at each length (`\VOneClaimsRatio...`) and the Discussion's V1 crossover (`\BreakevenTokensVOne`) | `v1_bytes.py --codec-only` (tier `v1`) | `python -m experiments.v1.v1_bytes --codec-only --model llama2-7b --seq 8192 --device cuda --label v1-codec` (and 2,048, 4,096, 16,384) | stdout (`total`) |
 | `tab:eval-v1-long`'s 2-block columns (V1 at 2,048 to 8,192 tokens, whole queries) | `v1_bytes.py --full` (tier `long`) | `python -m experiments.v1.v1_bytes --full --model llama2-7b --layers 2 --seq 8192 --modes Kpre --reps 3 --tampers 1 --label long-v1` (and 2,048, 4,096) | stdout |
 | `tab:params`' V1 rows (leaves, instances, table) | `v1_bytes.py` records read by `costs/params_table.py --v1-cells` | `python -m experiments.costs.params_table --v1-cells <v1_bytes records at two block counts>` | stdout |
-| `app:eval-gkr-leaf` and `ext_v1.tex`: "an instance of 2^25 leaves takes 0.52 s (15.6 ns per leaf)" on the RTX 2080 Ti | `gkr_bench.py` | `python -m experiments.v1.gkr_bench --n 20 22 24 25 --check 20` | stdout, one JSON line per size |
+| `app:eval-gkr-leaf` and `ext_v1.tex`: the time of a GKR instance of 2^25 leaves and its time per leaf on the run's GPU (`\GkrSecondsLarge`, `\GkrNsPerLeaf`) | `gkr_bench.py` | `python -m experiments.v1.gkr_bench --n 20 22 24 25 --check 20` | stdout, one JSON line per size |
 
 Run every command from `code/` with the checkout's library first on the path (`PYTHONPATH=src:.` on Linux,
 `PYTHONPATH="src;."` on Windows). `python -m experiments.v1.<script> --help` lists every option.
@@ -38,20 +37,23 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
   Llama-family checkpoint with `hf_llama.MAIN_RECIPE` and its fixed public prefix. The queries are test windows of
   `--seq` tokens.
 * **Main options.** `--modes C Kpre`, `--full` (also run the whole V1 query: the GKR on the GPU in Triton, or in
-  PyTorch on a CPU), `--reps n` (with `--full`: `n` timed queries of each protocol, interleaved, after a warm-up),
+  PyTorch on a CPU), `--reps n` (with `--full` and `n > 1`: `n` timed queries of each protocol, interleaved, after
+  the untimed query),
   `--tampers n` (with `--full`: `n` trace-tampering and `n` single-value V1 queries, each of which must be rejected),
   `--v1-verifier optimised baseline` (every listed verifier checks the same timed queries; `optimised`, the
   default, runs the window-table products, the batched GKR check and the batch-inverted logUp identity, `baseline`
   the float64 limb products and one check per instance), `--lmax 27`, `--codec-only`. The protocol settings default
   to the paper's configuration (`experiments.common.cli.PAPER`): `--policy cnn18c`, `--fs`, `--lean`,
   `--prune-last`, `--lookups` (mode Kpre's verifier reads the embedding rows itself), each with a `--no-...` form,
-  `--prob-max 2047` (11-bit attention probabilities; 255: the 8-bit graphs);
-  V1's proof is always in the compact encoding, and `--wire`/`--no-wire` concerns v0's proof only. The runtime flags:
+  `--prob-max 2047` (11-bit attention probabilities; 255: the 8-bit graphs); V1's proof is always in the compact
+  encoding, and `--wire`/`--no-wire` concerns v0's proof only. The runtime flags:
   `--device` (the prover's), `--verifier-device`, `--threads 8` and every implementation option of `pvi.options`.
 * **lmax.** `--lmax` sets the GKR instances' target size `2^lmax`: consecutive operations are packed into one
   instance while it stays within `2^lmax` leaves, and an operation larger than that is an instance of its own. The
   default is the library's `pvi.v1.cut.LMAX = 27`, the value of the run package and of the proofs `tab:eval-v1`
-  shows; a GPU with less memory may need a smaller `--lmax` (24 fits an 11 GB card; the proofs differ by under 0.3 MB). Each record lists every instance's size (`instance_bits`), from which the GKR term of Theorem `thm:v1` follows.
+  shows; a GPU with less memory may need a smaller `--lmax` (24 fits an 11 GB card; the proofs differ by under
+  0.3 MB). Each record lists every instance's size (`instance_bits`), from which the GKR term of Theorem `thm:v1`
+  follows.
 * **GPU memory of the GKR.** A lean GPU prover keeps every claim as int32 on the device, and the Triton GKR's tree of
   an instance of `2^n` leaves peaks at 148 bytes per leaf (18.5 GiB at `2^27`). `--gkr-memory` chooses what the query
   keeps on the GPU once its messages are encoded: `default` (the default) keeps everything, the measured path; `low`
@@ -86,8 +88,8 @@ the same query (`pvi.v1.protocol.cut_proof_bytes`: M1 encoded for real, every ot
 
 V1's verifier phase by phase on a random-weight decoder (`--model`, or `--small D H DH FF V` for a Llama-shaped one of
 those sizes) or, with `--real <checkpoint>` (and `--recipe`, `--smooth`, `--calib-seq`), the integer graph of the
-checkpoint's first `--layers` blocks on WikiText-2 windows (`experiments.common.real_cells`), each query checked once by every verifier of `--v1-verifier` (default both), interleaved. Inside the
-final check it also times `_xbar`, the eq tables, the Kpre fold check, the window products of each verifier and the
+checkpoint's first `--layers` blocks on WikiText-2 windows (`experiments.common.real_cells`), each query checked
+once by every verifier of `--v1-verifier` (default both), interleaved. Inside the final check it also times `_xbar`, the eq tables, the Kpre fold check, the window products of each verifier and the
 inner products, and counts the operations that fall back to the baseline products. Records: one JSON line per verifier
 (`path`: its name; `timings`: the median of every phase; `verify_s`; `env`), then a table. `--micro ROWS T` times the
 final check's products of one operation of each kind under both verifiers without a model (`ns_per_entry`), checks
@@ -105,8 +107,8 @@ seconds per size up to `n = 25` (5.8 GB).
 
 ## Reproducing the paper's numbers
 
-The final numbers come from one platform through the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`, `experiments/package/README.md`),
-whose records `paper/numbers.py` turns into the tables:
+The paper's numbers come from one platform through the run package (`bash code/experiments/package/run.sh
+--platform <name> <tier>`, `experiments/package/README.md`), whose records `paper/numbers.py` turns into the tables:
 
 * `v1`: `v1_bytes.py --full` on every model of `tab:eval-v1` (modes C and Kpre, 64 and 2,048 tokens, the headline
   cells with 5 timed queries, the others with 3); `v1_bytes.py --codec-only` on the full Llama-2-7B at 2,048 to

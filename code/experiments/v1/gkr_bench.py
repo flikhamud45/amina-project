@@ -1,7 +1,8 @@
 """V1's GKR prover on the GPU on its own: the time per instance and per leaf, and the peak GPU memory.
 
 Produces the extended version's GKR time per leaf (``app:eval-gkr-leaf`` and the V1 prover paragraph of
-``ext_v1.tex``: "an instance of 2^25 leaves then takes 0.52 s (15.6 ns per leaf)" on the RTX 2080 Ti).
+``ext_v1.tex``: the time of an instance of 2^25 leaves and its time per leaf, ``\\GkrSecondsLarge`` and
+``\\GkrNsPerLeaf``, on the run's GPU).
 
     python -m experiments.v1.gkr_bench --n 20 22 24 25 --check 20
     python -m experiments.v1.gkr_bench --n 22 --gkr-profile          # with the per-phase profile

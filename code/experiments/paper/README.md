@@ -4,14 +4,13 @@ Every table body and every measured number of the paper's text comes from one ru
 (`experiments/package/run.sh`) on one platform. `numbers.py` reads that run's records, checks them, and writes the
 body rows of each table and one LaTeX macro per text number; the paper (`paper_sp2027/main.tex`) inputs each file
 from `paper_sp2027/generated/` when it exists and from `paper_sp2027/fallback/`, which holds the values the paper
-prints before the final run, otherwise. The fallback wraps each value that the run replaces in `
-otready{...}` (orange in the PDF;
-`numbers.unmark` strips it when the checks read the fallback). Nothing here runs a model.
+prints before the final run, otherwise. The fallback wraps each value that the run replaces in `\notready{...}`
+(orange in the PDF; `numbers.unmark` strips it when the checks read the fallback). Nothing here runs a model.
 
 | Paper result | Script | Command (from `code/`) | Output |
 |---|---|---|---|
-| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-long-check`, `tab:eval-long-gpu`, `tab:eval-v1-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc`, `tab:eval-compare-full`, `tab:zkllm-lengths` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
-| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the client's own memory, the quality, attribution, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (about 490 macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
+| Every table body of `tab:eval-llm`, `tab:eval-v1`, `tab:options`, `tab:eval-compare`, `tab:quality`, `tab:params`, `tab:inrange`, `tab:setup`, `tab:eval-improve`, `tab:memory`, `tab:eval-long`, `tab:eval-long-check`, `tab:eval-long-gpu`, `tab:eval-v1-long`, `tab:eval-real`, `tab:eval-reexec`, `tab:eval-cpu`, `tab:eval-plans`, `tab:eval-lambda`, `tab:eval-compare-v1`, `tab:v1`, `tab:gen`, `tab:gen-full`, `tab:quality-attr`, `tab:zeroshot`, `tab:paths`, `tab:paths-acc`, `tab:eval-compare-full`, `tab:zkllm-lengths` | `numbers.py` (`tables.py`) | `PYTHONPATH=src:. ../.venv/bin/python -m experiments.paper.numbers --logs ../logs/final --platform final` | `paper_sp2027/generated/<table>.tex` |
+| Every measured number of the text: the abstract's "at least N times" (`\CpuRatioN`), the outcome counts (`\FinalNHonest`, ...), the V1 ratios, the break-even crossovers, the client's own memory, the quality, attribution, attack and sampler numbers, the spot-checking schemes' acceptance (`\Sok...`), ... (several hundred macros) | `numbers.py` (`macros.py`) | the same | `paper_sp2027/generated/numbers.tex` |
 | `fig:breakeven` (once its inputs are all in the run); `fig:overview`, `fig:protocol` with `--schematics` | `figures.py` | the same | `paper_sp2027/figures/*.pdf` |
 | Every value with its source record; per table the cells filled and missing; the checks | `numbers.py` | the same (`--check`: report only) | `generated/cells.csv`, `generated/coverage.txt` |
 
@@ -21,14 +20,13 @@ otready{...}` (orange in the PDF;
 Reads the run's folder `logs/<name>/`: every job log `sp-<cell>-<jobid>.out`, whose lines that start with `{` are the
 records, and the documents of the attack tier (`attack/*.json`, `attack/analytic.csv`) and the tv tier
 (`sampler_tv_*.json`). A record's tier comes from its job's prefix (`c-` cpuv, `x-` cpux, `v1-`, `serve-`, `b-` bench,
-`g-` gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long, `smoke`;
-`gate-` gate, the full-size checks run before the run, whose records are checked and fill no cell or number)
-and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`, `gen`, `setup`, `h2d`, `open_ab`,
-`forward_ab`, `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`, `ppl`, `zeroshot`, `digest`, `llama_diag`,
-`llama_attrib`, `attribution`, `bench_env`, `path_bound`, `inrange`, `tv`, ...; in the smoke's log, pytest's
-summary line is a record of kind `tests`). `Run` selects the record of one cell
-by every
-setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
+`g-` gpuv, `gen-`, `bt-` batch, `r-` real, `setup-`, `i-` improve, `q-` quality, `tv-`, `a-` attack, `l-` long,
+`zk-` zkllm, `smoke` and `xcheck` smoke; `gate-` gate, the full-size checks run before the run, whose records are
+checked and fill no cell or number) and its kind from its fields (`perf`, `v1`, `reexec`, `llamacpp`, `serve`,
+`gen`, `decode`, `setup`, `h2d`, `open_ab`, `forward_ab`, `encode_ab`, `fold_ab`, `gpu_profile`, `v1_phases`, `gkr`,
+`ppl`, `zeroshot`, `digest`, `digests`, `llama_diag`, `llama_attrib`, `attribution`, `zkllm`, `bench_env`,
+`path_bound`, `inrange`, `tv`, ...; in the smoke's log, pytest's summary line is a record of kind `tests`). `Run`
+selects the record of one cell by every setting that distinguishes the package's jobs: the tier, the model, the prompt length, the mode, the blocks, the
 verifier device (a V1 record's from its command line), the label and real or random weights (and, in the cpux tier,
 the threads, the AVX-512 attention option and mode C's plan); a main cell's weights are those that
 `experiments.common.real_cells.main_checkpoint` gives it (`records.MAIN`, the selectors' default; `run.sh`'s `rw` is
@@ -63,7 +61,9 @@ int8 decoders of the same shapes, and llama.cpp's Q8_0 and bf16 prefill, `LLAMAC
 configuration) are reported next to it (`tab:options`' llama.cpp row, `tab:eval-reexec`), never in its place.
 The long prompts (`tab:eval-long` on the CPU, `tab:eval-long-gpu` on the GPU) give the full Llama-2-7B as the
 least-squares line through the builds of 2, 3 and 4 blocks (2 and 3 on the GPU) at 32 blocks (`block_fit`), and
-`tab:eval-long-check` sets that line against the full model measured at 2,048 and 8,192 tokens (`long_errors`). `LongCheckStaged`, in the footnote on that check, is the GB of claims the 8,192-token prover moved to host memory (`claims_staged`, option `--host-claims`); it affects only the prover's time, which the check does not use.
+`tab:eval-long-check` sets that line against the full model measured at 2,048 and 8,192 tokens (`long_errors`).
+`\LongCheckStaged`, in the footnote on that check, is the GB of claims that the 8,192-token prover kept in host
+memory (`claims_staged`, option `--host-claims`); it affects only the prover's time, which the check does not use.
 `tab:params` and `tab:setup` follow from the library's parameters and the setup proof's byte model
 (`costs/setup_bytes.py`; the per-query columns of interactive queries, as the setup tier measures them), with V1's
 counts from the v1 tier; `tab:memory` takes the cpuv tier's Llama-2-7B cells: the client's own process (`perf.py
@@ -100,9 +100,9 @@ the run's GPU, else from the stored runs; at the other lengths from the run's ti
 ### `macros.py`
 The text numbers, by family (the platform and the plan, the CPU client and its own memory, the CPU verifier on other
 thread counts, without the AVX-512 attention and on Llama-2-13B, mode C's candidate plans, the security level, the
-outcome counts, the
-cost of the defence, batches against one opening, serving, V1, the comparison, the improvements, real weights, long
-prompts, quality, the sampler, the attack, the smoke's tests, the security parameters, the setup proof, generation, the break-even). The platform's macros
+outcome counts, the cost of the defence, batches against one opening, serving, V1, the comparison, the improvements,
+real weights, long prompts, quality, the sampler, the attack, the smoke's tests, the proofs compared across devices,
+the security parameters, the setup proof, generation, the break-even). The platform's macros
 (`\PlatformGpu`, `\PlatformCpu`, `\PlanLogPoints`) come from the records' `env` and `--policy`, so the captions and the
 sentences that say how a number was measured state the run's settings. Values that follow from the code alone are
 computed from the library under `--policy`: the setup proof's size, breakdown and radii (`costs/setup_bytes.py`'s byte
@@ -119,8 +119,8 @@ real-weight models whose every honest Kpre query at 2,048 tokens the real tier a
 `deployment/ev_breakeven.py`'s formulas on the run's claims, verifier and re-execution times and its byte model.
 `\OptionsRuns` and `\OptionsSpread` are the timed runs of `tab:options`' cells and their largest relative min--max
 spread; `\Outcome...` the tampered queries of the real-weight cells, their random-weight twins and the generation
-cells (all, V1's, the generated responses') and the setup tier's honest setup proofs, printed only when every tamper was rejected and every setup
-proof accepted. `\ZkllmSameGpu...` set zkLLM's prover on the run's GPU model (the proof binaries of two decoder
+cells (all, V1's, the generated responses') and the setup tier's honest setup proofs, printed only when every
+tamper was rejected and every setup proof accepted. `\ZkllmSameGpu...` set zkLLM's prover on the run's GPU model (the proof binaries of two decoder
 layers, times the layers) against our interactive mode-C prover on prompts of the same length: from the run's own
 `zkllm` tier (`logs/<name>/zkllm/summary.csv` and each run's `env.txt`) when it holds Llama-2-7B and Llama-2-13B on
 the run's GPU, else from the stored runs (`artifacts/results/zkllm_l40s/`), both read by `bench.literature` with the
@@ -133,9 +133,11 @@ prover, `\ZkllmSameGpuFactorLengthRange` the factors over every proved model and
 proved for both models and the two factors there (Sec. `sec:eval-compare`; the extended version's `ext:disc-options`
 states that no shorter length was proved for both models, which the build checks).
 `\SmokeTests` is the number of tests that passed in the smoke's pytest run on the run's platform (the summary line
-of its log). The spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and
-`tab:sok-derivation` (`\Sok...`) follow from the formulas and parameters those tables state (`attack/sok.py`; no run). The bounds over the in-range
-cells skip a layer and range without a successful edit. A number the text states as a bound ("at most", "up to",
+of its log). `\HwDigestCells` and `\HwDigestDevices` are the cells whose proofs and commitments the smoke tier's
+`xcheck` job found byte-identical on the run's GPU and CPU (and on another platform's, with `--xcheck-logs`), and
+those devices. The spot-checking schemes' acceptance probabilities and path counts of `tab:sok` and
+`tab:sok-derivation` (`\Sok...`) follow from the formulas and parameters those tables state (`attack/sok.py`; no
+run). The bounds over the in-range cells skip a layer and range without a successful edit. A number the text states as a bound ("at most", "up to",
 "within", "less than") is rounded up, one stated as "at least" down. The `Todo...` macros carry the `\todo` markers
 of numbers that the run fills (empty once generated).
 
@@ -149,9 +151,12 @@ The command: read, check, build, write. Options: `--logs` (default `../logs/<pla
 (mode C's plan; default the plan the records name, a mode-C record's `policy` or the benchmark tables' `pol<plan>`,
 else `bench.DEFAULT_POLICY`, `cnn18c`), `--prob-max` (the decoders' attention probabilities' scale of the benchmark
 cells, default 2047; 255 reads the stored runs' 8-bit cells), `--out` (default `paper_sp2027/generated`),
-`--figures` (default `paper_sp2027/figures`; `''` for none) and `--schematics`, `--expect <dry-run listing>`, `--check`, `--strict`,
-`--allow-missing`, `--rehearsal`, `--no-byte-model` (skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a
-laptop CPU), `--verbose`, `--compare-rows ROWS` (`tab:eval-compare`'s rows: `default`, `all`, a comma-separated list
+`--figures` (default `paper_sp2027/figures`; `''` for none) and `--schematics`, `--weights` (`auto`, `real` or
+`random`: the main cells' weights) and `--llama-licence` (`auto`, `yes` or `no`: whether the Llama-2 main cells are
+real), `--expect <dry-run listing>`, `--check`, `--strict`, `--allow-missing`, `--rehearsal`, `--no-byte-model`
+(skips `tab:params`, `tab:setup` and the break-even, which take several minutes on a laptop CPU), `--verbose`,
+`--xcheck-logs DIR...` (another platform's logs of the smoke tier, whose `xcheck` proofs must equal the run's;
+`\HwDigestDevices` then names its GPU and CPU), `--compare-rows ROWS` (`tab:eval-compare`'s rows: `default`, `all`, a comma-separated list
 of the keys of `tables.COMPARE_ROWS` or a file of them, one per line with `#` comments; an unknown key is refused
 with the list of keys). `SAME_VALUE` pairs each table cell with the macro that prints the same value of the same
 record, `TWO_JOBS` each quantity that two jobs measure (the serving harness's prover and the benchmark's, the
@@ -166,9 +171,11 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   disagree, an attribution whose float copy failed a check (`attribution.py`'s `ok`) or whose integer graph is not
   the quality tier's cell of the same graph (`scalar-g4-p8` at 128 tokens: another digest, or another perplexity
   over the same windows), a smoke log without `SMOKE OK`, with int8 GEMMs that are not exact or with a failed test
-  (its pytest summary line, the `tests` record), a `FAILED` line of a
-  script, records of more than one GPU or CPU model, an honest query rejected or an attack accepted in the
-  benchmark's outcome counts, builds of one certified model (`digest_check.py`, the quality tier's reproducible
+  (its pytest summary line, the `tests` record), a cell whose proofs or commitments differ between the GPU and the
+  CPU (the `xcheck` job's `digests`), a llama.cpp record not marked inexact or not run on its threads, a zkLLM run
+  whose proof binaries failed at a required length, a CPU timing without the native kernels, a `FAILED` line of a
+  script, jobs that name more than one GPU or CPU model (`CHECK FAILED platform:`), an honest query rejected or an
+  attack accepted in the benchmark's outcome counts, builds of one certified model (`digest_check.py`, the quality tier's reproducible
   build) whose digests, weights or commitment roots differ (`macros.digest_agreement`), a table cell that disagrees
   with the macro printing the same value (`SAME_VALUE`, beyond one unit of the coarser rounding), in the files
   written and in `paper_sp2027/fallback/` (`CHECK FAILED fallback:`).
@@ -191,14 +198,16 @@ benchmark's CPU verifier and perf.py's, v0's timed queries of the V1 job and per
   such as the gate tier's before the run).
 * `--strict`: also any job of `--expect` without results.
 * `--rehearsal`: every tier has at least one record of each kind it writes (`records.REHEARSAL_KINDS`), and no table
-  cell is expected (the `MISSING:` line counts them and leaves the exit status unchanged); the `CHECK FAILED text:` lines become warnings (a rehearsal's small cells need not bear out what
-  the text states about the final values).
+  cell is expected (the `MISSING:` line counts them and leaves the exit status unchanged); the `CHECK FAILED text:`
+  lines become warnings (a rehearsal's small cells need not bear out what the text states about the final values).
 
-The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more than 10%
-apart (`TWO_JOBS`), two records of one quality cell (two jobs that measure it) whose perplexity or ratio differ
-(`records.Run.ppl`; the later is used), records that name another mode-C plan than `--policy` (or several), an `int_mm`
-re-execution that is not recorded as bit-exact (it is then no exact baseline). `coverage.txt` lists them all, the
-records per tier and kind, and per table the cells filled and missing (`--verbose`: each missing cell and macro).
+The exit status is 1 on any of these. `WARNING` lines leave it unchanged: two jobs' values of one quantity more
+than 10% apart (`TWO_JOBS`), two records of one quality cell (two jobs that measure it) whose perplexity or ratio
+differ (`records.Run.ppl`; the later is used), records that name another mode-C plan than `--policy` (or several), an
+`int_mm` re-execution that is not recorded as bit-exact (it is then no exact baseline), nodes whose environment
+snapshots differ in a compared field (`logs/<name>/env/`), and a timed job whose GPU was slowed by a power or thermal
+limit or shared with another process (`logs/<name>/telemetry/`). `coverage.txt` lists them all, the records per tier
+and kind, and per table the cells filled and missing (`--verbose`: each missing cell and macro).
 
 ## The fallback
 
@@ -213,7 +222,7 @@ writes the same file names and the same macros. A number that the run lacks prin
 The fallback follows the definitions of the final run: exact re-execution is the fastest exact variant of the
 integer forward pass, the Kpre CPU times are under Fiat-Shamir, the integer OPT models are the certified recipe's.
 Its values come from the stored records (`artifacts/results/`, the benchmark tables
-`artifacts/comparison/tables_l40s_improved*/` under the plan `auto`) and from the development runs that measured
+`artifacts/comparison/tables_l40s_improved*/` under the plan `auto`) and from preliminary runs that measured
 the run package's cells on an RTX 2080 Ti and 8 threads of a Xeon Silver 4114, in the format the builders print; a
 value whose setting differs from the one the paper states (an interactive cell where the text says Fiat-Shamir, the
 legacy recipe's sampler distances) prints as `\todo{<tier>}`. `figures/ev_breakeven.pdf` and the fallback's

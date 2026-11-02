@@ -9,9 +9,9 @@
 \subsection{A Generated Response as One Prefill}
 \label{sec:gen-prefill}
 
-Proving each prefix of a response as its own query repeats the prompt: with $P=512$ prompt and
-$G=512$ generated tokens, Llama-2-7B's mode-$\sC$ proofs take about \GenPerPrefixTB{}\,TB, against
-\GenPrefillGB{}\,GB for one prefill.
+Proving each prefix of a generated response as its own query repeats the prompt: with $P=512$
+prompt and $G=512$ generated tokens, Llama-2-7B's mode-$\sC$ proofs would take about
+\GenPerPrefixTB{}\,TB, against \GenPrefillGB{}\,GB for the response as one prefill.
 
 \para{Reduction.} The response $y_1,\dots,y_G$ to a prompt $x$ is the greedy decoding if each
 $y_i$ is the first largest logit at position $P+i-1$ of the model run on
@@ -20,44 +20,42 @@ attention mixes positions, so a decoder with a KV cache computes exactly the int
 prefill of $s=x\,\|\,y_1\cdots y_{G-1}$. We prove one query on $s$, with $T=P+G-1$ positions and
 the LM head at the last $G$ positions; their number enters the graph digest (Section~\ref{sec:fs}).
 
-\para{Token rule.} First, the verifier requires that, for each $i<G$, column $i$ of the claimed
-$V\times G$ logits have its first largest entry at the next input token $y_i$. The last column
-gives $y_G$.
+\para{Token rule.} The verifier also requires that, for each $i<G$, column $i$ of the claimed
+$V\times G$ logits ($V$ the vocabulary size) has its first largest entry at the next input token
+$y_i$. The last column gives $y_G$.
 
 \para{Soundness.} The soundness error is the $\varepsilon$ of Theorem~\ref{thm:sound} for this
 graph, independent of $G$. A $y_i$ that is not the greedy token passes the token rule only if the
-claimed logits at position $P+i-1$ are wrong, and the first-wrong-layer argument applies
-unchanged. Claims and tokens are fixed before the challenges. In $\Kpre$, $Q$ in the reuse
-bound counts the verdicts the prover sees.
+claimed logits at position $P+i-1$ are wrong, and the proof of Theorem~\ref{thm:sound} applies
+unchanged. Claims and tokens are fixed before the challenges; in $\Kpre$, each response is one of
+the $Q$ queries.
 
 \para{Cost.} Each matrix is opened and folded once per response, so the proof grows only by the
-claims of the new positions. After a 512-token prompt (Fiat--Shamir, the int8 checkpoints, full
-models; the prover on one \PlatformGpu{}, the verifier on 8 threads of an \PlatformCpu{}), a greedy
-256-token Llama-2-7B response takes \GenLlamaProveC{}\,s to prove, \GenLlamaVerifyC{}\,s to verify and
+claims of the new positions. In the setup of Section~\ref{sec:eval-setup} (full models), a greedy
+256-token Llama-2-7B response after a 512-token prompt takes \GenLlamaProveC{}\,s to prove, \GenLlamaVerifyC{}\,s to verify and
 \GenLlamaProofC{} in mode $\sC$, and \GenLlamaProveK{}\,s, \GenLlamaVerifyK{}\,s and \GenLlamaProofK{} in $\Kpre$; Qwen3-4B takes
 \GenQwenProveC{}\,s, \GenQwenVerifyC{}\,s and \GenQwenProofC{} in $\sC$. Llama-2-7B's proof per generated token falls from
-\GenLlamaMBPerTokenShort{}\,MB at $G=64$ to \GenLlamaMBPerTokenLong{}\,MB at $G=256$, and a sampled response costs the
-same as a greedy one within \GenSampledWithin{}\%. For GPT-2 after a 64-token prompt, proving costs
+\GenLlamaMBPerTokenShort{}\,MB at $G=64$ to \GenLlamaMBPerTokenLong{}\,MB at $G=256$, and sampled responses take
+within \GenSampledWithin{}\% of the greedy ones' times. For GPT-2 after a 64-token prompt, proving takes
 \GenGptMsPerToken{}\,ms per generated token; zkAgent reports 0.30\,s per token for GPT-2, on other hardware and
-with other guarantees~\cite{zkagent}. Times exclude decoding, after which the prover computes the
-trace of $s$. A tampered response was always rejected.
+with other guarantees~\cite{zkagent}. Times exclude decoding, after which the prover computes the trace of $s$. Every tampered response was rejected.
 
 \subsection{Sampled Generation}
 \label{sec:gen-sampling}
 
-A token rule that accepted any plausible sampled token would let the provider choose the output.
-Instead, the client sends a fresh 32-byte seed with each query, and the response must be the
-output of a public, exact integer sampler keyed by that seed.
+Accepting any plausible sampled token would let the provider choose the output. Instead, the
+client sends a fresh 32-byte seed with each query, and the response must be the output of a
+public, exact integer sampler keyed by that seed.
 
 \para{The sampler.} It uses the Gumbel-max trick~\cite{gumbel1954,maddison2014astar}: sampling
 from $\mathrm{softmax}(l/\tau)$ is choosing $\arg\max_v(l_v/\tau+g_v)$ with independent standard
 Gumbel noise $g_v$. For claimed integer logits $z$ with real values $cz$, the temperature becomes
 the integer weight $a=\mathrm{round}(2^{16}c/\tau)$, and the noise of entry $v$ is $\Gamma[u_v]$,
 where $u_v$ is the $v$-th 16-bit word of
-$\mathrm{SHAKE256}(\texttt{pvi/sampler/v1}\,\|\,\mathit{seed}\,\|\,\mathit{position})$ and
+$\mathrm{SHAKE256}(\texttt{pvi/sampler/v1}\,\|\,\mathit{seed}\,\|\,\mathit{position})$ and, for
+$0\le i<2^{16}$,
 \begin{equation}
-  \Gamma[i] = \mathrm{round}\Big(2^{16}\cdot\big({-\ln}\big({-\ln}\tfrac{i+1/2}{2^{16}}\big)\big)\Big),
-  \qquad 0\le i<2^{16}.
+  \Gamma[i] = \mathrm{round}\Big(2^{16}\cdot\big({-\ln}\big({-\ln}\tfrac{i+1/2}{2^{16}}\big)\big)\Big).
   \label{eq:gumbel-table}
 \end{equation}
 The token is the first $v$ that maximises $az_v+\Gamma[u_v]$ among the $k$ largest entries of $z$
@@ -67,20 +65,20 @@ The token rule uses this choice in place of the argmax, and Fiat--Shamir absorbs
 seed.
 
 \para{Soundness and the seed.} The sampler adds no soundness term: the verifier recomputes each
-token from the checked logits, so a wrong token requires a wrong logit. A provider that chose the
-seed could try seeds until it obtained a preferred response; the client's seed, bound into the
-statement, prevents this. Convincing a third party that the seed was random would need a jointly
-generated seed (out of scope).
+token from the checked logits, so a wrong token requires a wrong logit. The client's seed, bound
+into the statement, stops the provider from trying seeds until it obtains a preferred response.
+Convincing a third party that the seed was random would need a jointly generated seed (out of
+scope).
 
 \para{Distribution.} The sampler approximates sampling at temperature $\tau$ with uniform
 variables quantised to steps of $2^{-16}$. Since $\Gamma[i]/2^{16}$ lies in about
-$[-2.47,11.78]$, a token whose temperature-scaled logit is more than about 14.25 below the largest
-is never drawn; exact sampling draws it with probability below $e^{-14.25}<6.5\cdot10^{-7}$. Over
-a vocabulary of $V$ tokens the excluded probability is thus below $(V-1)e^{-14.25}$: about 0.02 for Llama-2
-(32{,}000 tokens), 0.03 for GPT-2 and OPT (about 50{,}000) and 0.1 for Qwen3 (151{,}936).
-Computed exactly from the integer OPT-1.3B's logits at \TvPositions{} WikiText-2 positions, the sampler's
-total-variation distance to $\mathrm{softmax}(cz/\tau)$ at $\tau=1$ has median \TvTopK{} with
-$k=50$ and \TvFull{} with $k=0$, against \TvModel{} between the integer and the fp32 model's next-token
-distributions. It comes from the rounding of $a$ and, with $k=0$, from the bounded upper tail of
-$\Gamma$, which under-samples tokens 8 to 12 nats below a crowded top; a table of $2^{20}$ entries
-would lower it to \TvTwenty{}. Nucleus (top-$p$) sampling is not implemented.
+$[-2.47,11.78]$, the sampler never draws a token whose temperature-scaled logit is more than about 14.25
+below the largest, which exact sampling draws with probability below $e^{-14.25}<6.5\cdot10^{-7}$.
+Over $V$ tokens the excluded probability is below $(V-1)e^{-14.25}$: about 0.02 for Llama-2,
+0.03 for GPT-2 and OPT and 0.1 for Qwen3. Computed exactly from the integer OPT-1.3B's logits at
+\TvPositions{} WikiText-2 positions, the sampler's median total-variation distance to
+$\mathrm{softmax}(cz/\tau)$ at $\tau=1$ is \TvTopK{} with $k=50$ and \TvFull{} with $k=0$, against
+\TvModel{} between the integer and the fp32 model's next-token distributions. The error comes from the
+rounding of $a$ and, with $k=0$, from the bounded upper tail of $\Gamma$, which under-samples tokens
+8 to 12 nats below a crowded top; a table of $2^{20}$ entries would lower it to \TvTwenty{}.
+Nucleus (top-$p$) sampling is not implemented.

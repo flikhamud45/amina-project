@@ -247,6 +247,8 @@ def requant_fn(params: dict) -> OpFn:
 
 @dataclass
 class Op:
+    """An operation of a graph: its name, the names of the tensors it reads and the name of the one it writes."""
+
     name: str
     inputs: tuple[str, ...]
     output: str
@@ -284,6 +286,7 @@ class MatOp(Op):
         return self.n_in + (1 if self.has_bias else 0)
 
     def public(self) -> "MatOp":
+        """The op without its weights and bias: the shape, layout and bound that the verifier holds."""
         clone = copy.copy(self)
         clone.weight = None
         clone.bias = None
@@ -489,6 +492,7 @@ class IntGraph:
         return out
 
     def public(self) -> "IntGraph":
+        """The graph without weights (:meth:`MatOp.public`): what the verifier holds."""
         return IntGraph([op.public() for op in self.ops], self.input_name,
                         self.output_name, dict(self.meta))
 
@@ -511,10 +515,10 @@ class IntGraph:
         and note; a weight op's shape, layout, convolution and input bound (not its weights: a commitment binds
         those); a cheap op's kind (a named integer map with a version, :func:`op_kind`) and every constant it is
         called with (the requantisation multipliers, norm gains, look-up tables, attention multipliers, a fixed
-        prefix's keys and values) -- its input and output names and ``meta``. A graph with other cheap ops or
-        constants hashes to other bytes, and the bytes do not depend on where in the code a kind is implemented;
-        Fiat--Shamir absorbs it (:func:`pvi.v0.query.absorb_statement`), so a transcript is bound to the computation
-        it checks."""
+        prefix's keys and values) -- then the graph's input and output names and ``meta``. A graph with other
+        cheap ops or constants hashes to other bytes, and the bytes do not depend on where in the code a kind is
+        implemented; Fiat--Shamir absorbs it (:func:`pvi.v0.query.absorb_statement`), so a transcript is bound to
+        the computation it checks."""
         out: list[bytes] = [b"pvi/graph/v2"]
         for op in self.ops:
             if isinstance(op, MatOp):

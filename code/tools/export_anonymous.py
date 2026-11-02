@@ -22,7 +22,8 @@ machine-specific strings replaced, refused while any identifying string remains.
    of the private file's ``remotes``, and the private file's ``deny``, ``deny_words`` and ``deny_case`` strings.
    While anything matches, every match is listed and the exit status is 1.
 
-The private file is JSON kept outside the repository, so that no name is written into the repository itself::
+The private file is JSON kept outside the repository, so that no name is written into the repository itself (the
+comments below explain the fields and are not part of the file)::
 
     {"deny": ["<institution>", "<cluster account>", ...],      # matched anywhere, ignoring case
      "deny_words": ["<short user name>", ...],                  # whole words, ignoring case
@@ -86,6 +87,7 @@ WORD = r"(?<![^\W_]){}(?![^\W_])"
 
 
 def git(*args: str) -> str:
+    """The standard output of a git command run in the repository."""
     return subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True).stdout
 
 
@@ -362,6 +364,7 @@ def scan(out: Path, private: dict) -> list[str]:
 
 
 def main(argv=None) -> int:
+    """Export, then scan; exit status 1 while an identifying string remains."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--out", required=True, help="an empty folder outside the repository")
     ap.add_argument("--private", required=True,

@@ -139,12 +139,13 @@ def dense_transition_matrix(
     Entry ``[j, i]`` is the probability that a step from neuron ``j`` of ``layer_index`` lands on
     parent ``i`` of ``layer_index - 1``.  The two source-dependent samplers of the family score a
     parent by its claimed contribution, so the whole matrix is one broadcast product of the layer's
-    weight magnitudes with the claimed parent magnitudes -- which is what turns the per-neuron DP of
-    ``acceptance_probability`` into a single matrix multiply.
+    weight magnitudes with the claimed parent magnitudes.
 
     The construction mirrors each sampler's own ``transition_distribution`` exactly (absolute value,
     optional additive floor, row normalisation, uniform fallback on an all-zero row), so the result
-    agrees with the per-neuron computation to floating-point round-off.
+    agrees with the per-neuron computation to floating-point round-off.  :func:`fast_acceptance` applies
+    the same matrix in factored form without building it; this explicit form is the reference that
+    ``tests/test_adaptive_game.py`` checks.
     """
     layer = network.architecture[layer_index]
     assert isinstance(layer, DenseLayer)
@@ -235,11 +236,11 @@ def fast_acceptance(
         ``g_0 = 1``,    ``g_l = c_l * (P_l g_{l-1})``,    ``Pr[accept] = pi . g_L``,
 
     raised to ``n_paths``.  For a dense layer whose sampler ignores the source node ``P_l`` has
-    identical rows, so ``P_l g_{l-1}`` is one dot product; for a source-dependent dense sampler
-    ``P_l`` is built in one broadcast by :func:`dense_transition_matrix` and applied as a single
-    matrix multiply.  A non-dense layer or any other source-dependent sampler falls back to the exact
-    per-neuron sum, so the function is correct for any architecture and sampler while being fast for
-    the dense MLP of this study.
+    identical rows, so ``P_l g_{l-1}`` is one dot product; for the two contribution samplers
+    ``P_l g_{l-1}`` is computed in factored form (the matrix of :func:`dense_transition_matrix`,
+    never built) with two matrix-vector products.  A non-dense layer or any other source-dependent
+    sampler falls back to the exact per-neuron sum, so the function is correct for any architecture
+    and sampler while being fast for the dense MLP of this study.
     """
     params = params or ProtocolParams()
     masks = locally_consistent_mask(network, trace, params)

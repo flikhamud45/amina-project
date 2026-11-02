@@ -91,8 +91,7 @@ weights $A$ ($k_j$ rows), claims $Z$ and error $D\neq0$. The committed matrix $\
 encodings of the columns of $A$. For each column $\chi'_i$ of $\chi'$ the verifier computes
 $z_i=Z\chi'_i$ and $w_i=[\tilde X;\mathbf 1]\chi'_i$ and checks $\enc(z_i)_c=w_i^\T\hat A'_{c}$ on the
 opened columns. Since $w_i^\T\hat A'=\enc(Aw_i)$ and $Aw_i=A[\tilde X;\mathbf 1]\chi'_i$, correct claims
-pass. If $D\chi'_i=0$ for every $i$, then $\chi'$ is not the identity, and a nonzero row $d$ of $D$
-satisfies $d^\T\chi'_i=0$ for $r$ independent uniform vectors, which has probability at most
+pass. If $D\chi'_i=0$ for every $i$, then a nonzero row $d$ of $D$ satisfies $d^\T\chi'_i=0$ for $r$ independent uniform vectors, which has probability at most
 $p^{-r}$. Otherwise $\enc(z_i)$ and $\enc(Aw_i)$ are distinct codewords of message length $k_j$ for
 some $i$, and the column term applies as above.
 
@@ -121,14 +120,14 @@ over the rounds and matrices, and a prover that makes $Q$ random-oracle queries 
 probability at most $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$~\cite{canetti2019fs,bcs16}. Since
 $\varepsilon_{\mathrm{rbr}}\le\varepsilon_{\sC}$, this implies the bound of Section~\ref{sec:fs},
 which is the one the parameters of Section~\ref{sec:fs} and Table~\ref{tab:params} meet: their
-$\beta$ keeps the $\log_2(2|\mathcal J|)$ bits of the union bound. \qed
+$\beta$ keeps the $\log_2(2n_{\mathrm{op}})$ bits of the union bound. \qed
 
 \subsection{Untrusted Commitments}
 \label{app:untrusted}
 
-This appendix gives in full the material behind the paragraph ``Untrusted commitments'' of
-Section~\ref{sec:setup-proof}: the attack that motivates the setup proof, the setup proof, its
-soundness theorem with proof, and why its opened columns cannot be avoided.
+This subsection gives the material of Section~\ref{sec:setup-proof} in full: the attack that
+motivates the setup proof, the setup proof, its soundness theorem with proof, and why its opened
+columns cannot be avoided.
 
 \para{Why the column check is not enough.} A Merkle root can bind any matrix $E_j$, not only a
 matrix of codewords, which is why linear-code polynomial commitments pair each evaluation with a
@@ -179,9 +178,10 @@ proof takes $s\ge7$. An untrusted commitment needs more columns, not more random
 that every committed matrix $E_j$ is \emph{$e_j$-close} to a matrix of codewords: it differs from
 $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns, which makes $A^*_j$ unique. With Fiat--Shamir
 challenges over the graph digest and every tree's root and shape, (1)~the verifier draws $s$ uniform
-base-field combinations $\psi_j$ of the rows of each matrix; (2)~the committer sends $\psi_jA^*_j$;
-(3)~the verifier draws $t^0_j$ distinct uniform columns of each tree, which the committer opens; and
-(4)~the verifier checks the multiproofs and $\enc(\psi_jA^*_j)_c=\psi_jE_{j,c}$. Transposed matrices
+base-field combinations $\psi_j$ of the rows of each matrix; (2)~the committer sends the combined
+rows $u^0_j$, honestly $\psi_j^\T A_j$; (3)~the verifier draws $t^0_j$ distinct uniform columns of
+each tree, which the committer opens; and (4)~the verifier checks the multiproofs and
+$\enc(u^0_j)_c=\psi_j^\T E_{j,c}$. Transposed matrices
 need this proof, since their per-query combination $[X;\mathbf 1]\chi'$ is not uniform.
 
 \begin{theorem}[soundness with an untrusted commitment]
@@ -301,7 +301,7 @@ $P_j(t)\le2^{-\beta}$. Since
 \]
 $t^0_j(\beta)$ is about $\beta/{-\log_2(1-e_j/n_j)}$ when $t^0_j(\beta)\ll n_j$.
 (iii)~In each tree, our setup proof opens the maximum of $t^0_j(\beta_0)$ over the tree's members
-(Appendix~\ref{app:untrusted}). So at its radii and at error $2^{-\beta_0}$ per matrix, no complete
+(paragraph ``Parameters'' above). So at its radii and at error $2^{-\beta_0}$ per matrix, no complete
 column-only test opens fewer leaves of any tree. The column term of $\varepsilon_0$ is also tight:
 the committer of~(i) passes our setup proof with probability at least $P_j(t^0_j(\beta_0))$, where
 $j$ is the member that attains the maximum.
@@ -323,7 +323,7 @@ at least $\binom{n_j-t}{e_j+1}\big/\binom{n_j}{e_j+1}=P_j(t)$. On this event the
 throughout. The verifier then accepts, since by completeness it accepts the honest run.
 (ii)~The bound on the number of leaves follows from~(i) and the minimality of $t^0_j(\beta)$. For
 $i<t$ and $b=e_j+1$, $b/n_j\le b/(n_j-i)\le b/(n_j-t+1)$, which gives the two bounds on $P_j(t)$.
-(iii)~Appendix~\ref{app:untrusted} sets each tree's $t^0$ to the least $t$ with
+(iii)~The parameter rule sets each tree's $t^0$ to the least $t$ with
 $P_j(t)\le2^{-\beta_0}$ for all of its members. Our setup proof is complete and column-only, so~(i)
 applies to it.
 \end{proof}

@@ -200,7 +200,7 @@ def _merkle_jobs(rnd):
 def test_merkle_worker_processes_give_the_same_results(monkeypatch, set_options):
     jobs, want = _merkle_jobs(random.Random(3))
     jobs.append((jobs[0][0], jobs[0][1], jobs[0][2], [0] + jobs[0][3][1:]))   # not bytes: raises
-    sequential = com.verify_multiproofs(jobs, workers=2)                      # off by default
+    sequential = com.verify_multiproofs(jobs, workers=2)                      # in this process (the default)
     assert [ok for ok, _ in sequential[:-1]] == want and all(exc is None for _, exc in sequential[:-1])
     assert isinstance(sequential[-1][1], TypeError)
     # proof entries as memoryviews hash as bytes do, but cannot be pickled to a worker

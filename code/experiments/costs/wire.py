@@ -12,18 +12,18 @@ A spec is an image model (``lenet5``, ``vgg11``, ``vgg16``, ``resnet18_cifar``: 
 shapes alone matter here; ``mlp_mnist``: the trained MLP of the attack) or ``decoder:tokens[:blocks]`` (the
 benchmark's random-weight decoders, all blocks by default; with several block counts the per-block slope extrapolates
 to the full model; attention probabilities of ``--prob-max``, default 2047: 11 bits, as the cost measurements' graphs;
-the stored ``wire_laptop.json`` predates the option and used the 8-bit graphs, ``--prob-max 255``).  The image
+the stored ``wire_laptop.json`` was measured on the 8-bit graphs, ``--prob-max 255``).  The image
 models' queries are MNIST test digits, read with ``download=False`` from ``--mnist`` (padded to 32x32 and repeated on
 3 channels for the CIFAR shapes), calibrated on the first 512 training digits.
 
 Per spec and mode (C at ``--lam``, interactive; Kpre at ``--lam``, or the level of ``--kpre-lam`` for the model:
 Qwen3-4B at 40 as in Maverick's row), ``run_query`` with and without ``wire`` alternate on the same queries and seeds,
-at each of ``--threads``: the medians of every byte and timing part, and the bits per claim.  Mode C is sized under the
-per-op commitment (one tree per weight op; the encoding's effect does not depend on the plan), and for a decoder
-without a commitment (the rate-4 commitment of a decoder takes minutes on a laptop CPU): the claims are encoded as the
-prover encodes them, ``u`` and the columns have fixed sizes, and the Merkle paths are those of the challenge
-``run_query`` draws with seed 0.  The codec's own throughput (encode, decode into int64, at the same thread counts)
-is compared with reading the same claims as int32 and widening them.
+at each of ``--threads``: the medians of every byte and timing part, and the bits per claim.  On the image models
+mode C runs under the per-op commitment (one tree per weight op; the encoding's effect does not depend on the plan).
+A decoder's mode C is sized without a commitment (the rate-4 commitment of a decoder takes minutes on a laptop CPU;
+``C_lam<l>_exact``): the claims are encoded as the prover encodes them, ``u`` and the columns have fixed sizes, and
+the Merkle paths are those of the challenge ``run_query`` draws with seed 0.  The codec's own throughput (encode,
+decode into int64, at the same thread counts) is compared with reading the same claims as int32 and widening them.
 
 Output: ``--out`` (default ``artifacts/results/development/wire.json``), a JSON object keyed by spec (``codec``:
 claims, bytes, ``bits_per_claim``; ``<mode>_lam<l>_threads<n>``: the A/B; ``C_lam<l>_exact``; ``builds``;

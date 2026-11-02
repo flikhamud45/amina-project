@@ -1,8 +1,8 @@
 """The OPT recipes and the extended version's variants of ``pvi.models.hf_opt.build_opt_from_hf`` on a tiny OPT whose
 weights are drawn by Python's ``random`` (independent of the transformers version's initialisation).
 
-* Stored expectations: the certified recipe, the superseded recipes (the scalar norm gain 4; the legacy recipe, alpha
-  0.55 with percentile statistics), the per-row power-of-two weight scales (``row_pow2``) and the data-free
+* Stored expectations: the certified recipe, the recipes it is compared with (the scalar norm gain 4; the legacy
+  recipe, alpha 0.55 with percentile statistics), the per-row power-of-two weight scales (``row_pow2``) and the data-free
   cross-layer equalisation (``cle_mlp = 0``) build the integer graphs whose fingerprints are stored here -- the graph
   digest, every weight and bias, the logit scale and the integer logits at every position of a fixed query.  The two
   variants are those of the extended version's per-row and equalisation numbers.  Every statistic of these recipes

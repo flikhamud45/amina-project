@@ -43,7 +43,7 @@ def mlp_architecture(
     """A fully connected ReLU network with a linear output layer.
 
     This is the main model of the attack experiments.  Its dense parent sets mean
-    a path step selects a uniformly random neuron of the layer below, which makes
+    a uniform path step selects a uniformly random neuron of the layer below, which makes
     the per-path detection probability of a single-node tamper exactly
     ``1 / width`` and lets the analytic and empirical numbers be compared without
     any modelling slack.

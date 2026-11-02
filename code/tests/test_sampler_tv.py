@@ -189,8 +189,9 @@ def test_a_wider_table_is_closer_to_softmax():
 
 
 def test_a_logits_cache_is_read_only_for_its_own_model_and_recipe(tmp_path):
-    """``--logits-cache`` holds one model's logits under one recipe: a cache written before the recipe was recorded
-    holds the legacy graph, so the certified default refuses it and ``--recipe legacy`` reads it."""
+    """``--logits-cache`` holds one model's logits under one recipe: a cache whose metadata names no recipe holds the
+    legacy graph, so the certified default refuses it, ``--recipe legacy`` reads it, and another calibration window
+    is refused."""
     path = tmp_path / "cache.npz"
     meta = {"model": "facebook/opt-125m", "seq": 8, "windows": 1, "calib_seq": 8, "logit_scale": 0.01}
     z = np.arange(6, dtype=np.int32).reshape(2, 3)

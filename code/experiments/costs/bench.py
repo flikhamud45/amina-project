@@ -6,8 +6,9 @@ random-weight decoders with the shapes of the paper's language models.  Its reco
 ``tab:eval-llm`` (prover, CPU and GPU verifier, proof of modes C and Kpre), the ``ours`` rows of
 ``tab:eval-compare``, the soundness and completeness counts of Sec. ``sec:eval-setup`` (every honest query
 accepted, every attack rejected, with the check that rejected it; ``comparison/count_outcomes.py``), the
-single-neuron attack and the path test on the image models (Sec. ``sec:break``) and, with ``--gen``, the
-generated-response cells of ``tab:gen``.  Nothing is aggregated here: ``comparison/aggregate.py`` makes the tables.
+single-neuron attack and the path test on the image models (Sec. ``sec:break``) and, with ``--gen``, cells of
+generated responses on this harness (the numbers of ``tab:gen`` come from ``generation/gen_bench.py``).  Nothing is
+aggregated here: ``comparison/aggregate.py`` makes the tables.
 
     python -m experiments.costs.bench cnn --model lenet5 --platform <name>
     python -m experiments.costs.bench llm --model llama2-7b --seq 64 --builds full --modes C:fs --lams 128 \\
@@ -34,8 +35,8 @@ ts}`` with, where they apply, ``batch``, ``attack``, ``stage``, ``lam``, ``k`` a
 evidence of :mod:`pvi.core.contention` for each timed phase).  Two rows carry hex digests instead of numbers (the
 aggregates skip them; ``comparison/fingerprint_check.py`` compares them between platforms): ``commit_roots_sha256``
 in the commitment cells (:func:`experiments.common.records.roots_sha256`) and, per Fiat--Shamir query,
-``proof_transcript`` (the transcript's digest, :func:`pvi.v0.query.run_query`).  A platform names one prover GPU and one CPU model:
-the root's ``PLATFORM.json`` records them, and a job on other hardware, or in a frozen root, stops.  A finished cell
+``proof_transcript`` (the transcript's digest, :func:`pvi.v0.query.run_query`).  A platform names one prover GPU and
+one CPU model: the root's ``PLATFORM.json`` records them, and a job on other hardware, or in a frozen root, stops.  A finished cell
 has a ``.done`` marker and is skipped, so an interrupted job resumes where it stopped.  An honest query that is
 rejected stops the job and keeps the cell's records as ``<cell>.rejected-<run_id>.jsonl``.
 
@@ -49,9 +50,9 @@ verifier), ``_batch`` (batch sizes other than the defaults), ``_prune`` (decoder
 ``_lookups`` (the K and Kpre cells of decoders with ``--lookups``), ``_pmax<n>`` (decoders whose attention
 probabilities' scale is not the stored cells' 255, :data:`STORED_PROB_MAX`: ``_pmax2047``, 11 bits), ``_gen<G>``,
 ``_pol<name>`` (the commitment and mode-C cells under a plan other than ``per-op``) and ``_real`` (decoders,
-``--real``: a checkpoint's weights).  A cell measured under the same
-settings therefore has the name of the stored cell measured under them, and the cells a setting does not change (e.g.
-the K and Kpre cells under a commitment plan) are shared between runs.
+``--real``: a checkpoint's weights).  A cell measured under the same settings therefore has the name of the stored
+cell measured under them, and the cells a setting does not change (e.g. the K and Kpre cells under a commitment plan)
+are shared between runs.
 
 **Real weights.**  The decoder cells take random weights of the model's shapes (``--seed``) and random prompts
 (``--prompt-seed``) unless ``--real`` names a Hugging Face checkpoint (``--model`` names its shapes): its integer graph
@@ -60,14 +61,13 @@ is then built as ``perf.py --real`` builds it (:mod:`experiments.common.real_cel
 public prefix), loaded and calibrated once per job, and the prompts are the WikiText-2 test split's windows from its
 start (``perf.py --real``'s queries: the ``i``-th prompt of ``T`` tokens is the ``i``-th window of ``T`` tokens).  A
 build of ``n`` blocks is the checkpoint's first ``n``, the full graph's first ``n`` (OPT and Llama-family alike).  The
-cells are named ``_real`` and their ``config`` holds ``real`` (the checkpoint) and ``recipe``
-(``certified`` or ``main``); the commitment cell also records ``load_checkpoint``, the seconds of loading the
-checkpoint in fp32 and its calibration, which ``build_graph`` (the integer graph's own calibration and build) does not
-include.  Refused: the image models, GPT-2 (no integer builder of a real checkpoint), a prompt (with ``--gen``, the
-prompt and the generated tokens, behind a Llama-family recipe's fixed prefix) longer than the checkpoint's trained
-context, a checkpoint of other shapes than ``--model``'s, and an attention probabilities' scale other than the
-paper's.  Without ``--real`` the cells and their
-records are the random-weight ones.
+cells are named ``_real`` and their ``config`` holds ``real`` (the checkpoint) and ``recipe`` (``certified`` or
+``main``); the commitment cell also records ``load_checkpoint``, the seconds of loading the checkpoint in fp32 and its
+calibration, which ``build_graph`` (the integer graph's own calibration and build) does not include.  Refused: the
+image models, GPT-2 (no integer builder of a real checkpoint), a prompt (with ``--gen``, the prompt and the generated
+tokens, behind a Llama-family recipe's fixed prefix) longer than the checkpoint's trained context, a checkpoint of
+other shapes than ``--model``'s, and an attention probabilities' scale other than the paper's.  Without ``--real``
+the cells and their records are the random-weight ones.
 
 Hardware and time: the paper's cells ran on an NVIDIA L40S prover with 8 threads of an AMD EPYC 9334 as the CPU
 verifier.  A CNN or GPT-2 job takes minutes, a 7B or 13B decoder at 2,048 tokens one to two hours and up to 128 GB

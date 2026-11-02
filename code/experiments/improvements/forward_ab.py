@@ -3,7 +3,7 @@
 The row "Weight products on int8 GEMMs (forward pass)" of ``tab:eval-improve`` (``sections/ext_evaluation.tex``).
 
     python -m experiments.improvements.forward_ab --model llama2-7b --layers 2 --seq 2048
-    python -m experiments.improvements.forward_ab --model llama2-7b --real meta-llama/Llama-2-7b-hf --layers 2 \
+    python -m experiments.improvements.forward_ab --model llama2-7b --real meta-llama/Llama-2-7b-hf --layers 2 \\
         --seq 2048
 
 ``MatOp.compute`` runs a weight op on a GPU whose ``torch._int_mm`` passes ``field.int8_ok`` as int8 GEMMs
@@ -26,11 +26,11 @@ integer builder of a real checkpoint (GPT-2), ``--prob-max`` (the recipe fixes t
 
 Record (one JSON line per model, block count, prompt length and variant ``float32`` / ``int8``): ``model``, ``real``
 (the checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
-(:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, ``prove_forward`` (the median),
+(:func:`experiments.common.real_cells.recipe_fields`), ``layers``, ``seq``, ``prove_forward`` (the median),
 ``vs_float32``, ``identical``, ``queries``, ``int8_ok``, ``prob_max`` (the graph's attention probabilities' scale),
-the GPU and ``env``.  Needs a CUDA GPU with int8 GEMMs; minutes per build.  With ``--real`` the checkpoint is loaded
-in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for Llama-2-7B, next to the integer
-graph).
+the GPU, ``host`` and ``env``.  Needs a CUDA GPU with int8 GEMMs; minutes per build.  With ``--real`` the
+checkpoint is loaded in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for Llama-2-7B,
+next to the integer graph).
 """
 from __future__ import annotations
 

@@ -8,9 +8,9 @@ A cut entry with residue ``delta`` and window width ``W`` is the leaf ``v = delt
 ``xi`` are linearly independent over ``F_p``.  For a cut operation with the honest input, (P3), (P4), (D1) and
 (D4) bound ``|delta| < 2^30 + 2^16``, so a negative ``delta`` maps to ``p + delta > 2^16 >= W`` and no residue
 wraps around into the table (the no-wrap lemma of the V1 appendix).  The prover sends integer multiplicities
-``m_t`` (the paper's ``mu_tau``) and proves the roots of ``sum_i 1 / (alpha - v_i)`` with one fractional-sum GKR per
-instance (:mod:`pvi.v1.gkr`); the verifier checks ``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` over the
-instances ``beta``.
+``m_t`` (the paper's ``mu_tau``) and proves each instance's sum ``sum_i 1 / (alpha - v_i)``, as the root fraction
+``p0 / q0`` of one fractional-sum GKR (:mod:`pvi.v1.gkr`); the verifier checks
+``sum_beta p0 / q0 = sum_t m_t / (alpha - tau_t)`` over the instances ``beta``.
 
 A proof can hold more than ``p`` leaves, and plain logUp would let ``p`` copies of an off-table value cancel.  The
 integer-multiplicity lemma of the paper (tested by exhaustive search on a small field): if ``0 <= m_t < p`` and

@@ -1,7 +1,7 @@
 """Where a query's CUDA time goes with the streaming GPU verifier: one profiled query after a warm-up.
 
-The shares of ``sections/ext_evaluation.tex`` after ``tab:eval-improve`` ("copies take 32% of the CUDA time of an
-OPT-1.3B query (12 blocks) and int8 GEMMs 4.4%").
+The shares of ``sections/ext_evaluation.tex`` after ``tab:eval-improve``: the share of the CUDA time of an OPT-1.3B
+query (12 blocks) taken by copies and by int8 GEMMs (``\\ProfileCopies``, ``\\ProfileIntMM``).
 
     python -m experiments.improvements.gpu_profile --model opt-1.3b --layers 12 --seq 2048
     python -m experiments.improvements.gpu_profile --model llama2-7b --layers 2 --seq 2048 --top 40
@@ -13,11 +13,11 @@ verifier on the GPU, under the protocol flags of :func:`experiments.common.cli.a
 paper's configuration), then profiles a second query with ``torch.profiler``.  It prints the query's phase timings,
 the operators ranked by CUDA time and by CPU time, and one JSON line (``kind`` ``gpu_profile``): ``cuda_total_s`` (the
 sum of the device-side events' own time, as the profiler's table totals it) and, for each ``--share`` operator
-(default ``aten::copy_``, the host-to-device and device-to-host copies; ``aten::_int_mm``, the int8 GEMMs;
+(default ``aten::copy_``, every tensor copy, the host-device transfers included; ``aten::_int_mm``, the int8 GEMMs;
 ``aten::index_select``; and ``_attn_kernel``, the fused attention kernel), its CUDA time and its share of the total,
 with ``model``, ``real`` (the checkpoint; None for random weights), ``recipe``, ``smooth``, ``calib_seq``
-(:func:`experiments.common.real_cells.fields`), ``layers``, ``seq``, the timings, the acceptance, ``prob_max`` (the
-graph's attention probabilities' scale), the GPU and ``env``.  Needs a CUDA GPU; minutes.
+(:func:`experiments.common.real_cells.recipe_fields`), ``layers``, ``seq``, the timings, the acceptance, ``prob_max``
+(the graph's attention probabilities' scale), the GPU, ``host`` and ``env``.  Needs a CUDA GPU; minutes.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights and prompts, the integer
 graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the certified recipe,

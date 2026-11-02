@@ -1,23 +1,24 @@
 """The prover's fold and column openings on exact int8 GEMMs against float64 products, on the same queries.
 
 The rows "Opening and fold on int8 GEMMs (prover, C, T=64)" of ``tab:eval-improve`` (``sections/ext_evaluation.tex``)
-and the body's "3.7--4.3x faster on Llama-2 blocks" (Sec. ``sec:eval-cost``).
+and the prover's gain on Llama-2 blocks in Sec. ``sec:eval-cost`` (``\\ImproveOpenRange``).
 
     python -m experiments.improvements.open_ab --model llama2-7b --layers 1 4 --queries 7
     python -m experiments.improvements.open_ab --model llama2-13b --layers 1 --queries 7
     python -m experiments.improvements.open_ab --model gpt2 --queries 7
-    python -m experiments.improvements.open_ab --model llama2-7b --real meta-llama/Llama-2-7b-hf --layers 1 4 \
+    python -m experiments.improvements.open_ab --model llama2-7b --real meta-llama/Llama-2-7b-hf --layers 1 4 \\
         --queries 7
 
 ``WeightCommitment.fold`` and the ``columns_at`` of both layouts compute their products with
 ``field.weight_matmul_mod``: on a GPU whose ``torch._int_mm`` passes ``field.int8_ok``, as int8 GEMMs with
 bit-identical results, else in float64 (``field.small_matmul_mod``).  This script builds the decoder as ``bench.py``
 does (random weights, ``--seed``; ``--layers`` blocks of the model, the last one pruned), commits it under ``--policy``
-(default the paper's plan ``cnn18c``) and runs ``--queries`` mode-C queries with ``run_query`` (the protocol flags of
-:func:`experiments.common.cli.add_protocol_arguments`, default the paper's configuration), each once with the float64
-products and once with the int8 ones, the order alternating; the first query warms both up.  Both runs of a query use
-the same challenge seed, so they draw the same ``chi`` and the same columns: the script checks that they return the same
-folded rows, opened columns and multiproofs, and that the verifier accepts.
+(default the paper's plan ``cnn18c``) and runs ``--queries + 1`` mode-C queries with ``run_query`` (the protocol
+flags of :func:`experiments.common.cli.add_protocol_arguments`, default the paper's configuration), each once with the
+float64 products and once with the int8 ones, the order alternating; the first query warms both up, the other
+``--queries`` are timed.  Both runs of a query use the same challenge seed, so they draw the same ``chi`` and the same
+columns: the script checks that they return the same folded rows, opened columns and multiproofs, and that the
+verifier accepts.
 
 ``--real`` (a Hugging Face checkpoint; ``--model`` names its shapes): instead of random weights and prompts, the integer
 graph of the checkpoint's first ``--layers`` blocks (:mod:`experiments.common.real_cells`; OPT: the certified recipe,
@@ -31,13 +32,13 @@ The float64 path is the implementation option :data:`OPTION` of :mod:`pvi.option
 (``options.using(int8_opening=False)``).
 
 Record (one JSON line per model, block count and variant ``float64`` / ``int8``): ``model``, ``real`` (the checkpoint;
-None for random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.fields`),
+None for random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.recipe_fields`),
 ``layers``, ``seq``, the medians of the prover's parts (``timings``: ``prove_forward``, ``prove_fold``,
 ``prove_open``, ...), their sum ``prove_s`` (the prover's total, the table's value), ``open_fold_s`` (``prove_fold +
 prove_open``), ``vs_float64``, ``identical``, ``accepted`` of ``queries``, ``int8_ok``, ``prob_max`` (the graph's
-attention probabilities' scale), the GPU and ``env``.  Needs a CUDA GPU with int8 GEMMs (an RTX 2080 Ti or newer);
-minutes per build.  With ``--real`` the checkpoint is loaded in fp32 and calibrated on the CPU first (host memory: its
-fp32 weights, 27 GB for Llama-2-7B and 52 GB for Llama-2-13B, next to the integer graph).
+attention probabilities' scale), the GPU, ``host`` and ``env``.  Needs a CUDA GPU with int8 GEMMs (an RTX 2080 Ti
+or newer); minutes per build.  With ``--real`` the checkpoint is loaded in fp32 and calibrated on the CPU first
+(host memory: its fp32 weights, 27 GB for Llama-2-7B and 52 GB for Llama-2-13B, next to the integer graph).
 """
 from __future__ import annotations
 

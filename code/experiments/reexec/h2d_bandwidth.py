@@ -1,10 +1,9 @@
 """The host-to-device and device-to-host copy bandwidth of the node: the floor of a GPU client's time.
 
 A GPU client receives the proof in host memory and uploads it before checking it, so its time has a floor of bytes
-over bandwidth, against which the GPU verifier's time is read; with the proof sizes it gives the extended version's
-transfer times (``ext_discussion.tex``, the client's view of a 2,048-token proof) and the number pipeline's
-``\\HtoDPinnedGBs`` (``paper/numbers.py``, the ``gpuv`` tier's pinned host-to-device bandwidth).  The run package
-measures it in its ``smoke`` and ``gpuv`` tiers.
+over bandwidth, against which the GPU verifier's time is read.  The paper reports no number of this script: its
+records describe the platform (the extended version's transfer time of a proof is the proof's size over a 10 Gb/s
+network link, not this bandwidth).  The run package measures it in its ``smoke`` and ``gpuv`` tiers.
 
     python -m experiments.reexec.h2d_bandwidth --sizes-mb 64 1024 4096 --reps 10 --label gpuv
 

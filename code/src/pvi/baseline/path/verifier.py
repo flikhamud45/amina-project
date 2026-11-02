@@ -84,6 +84,8 @@ class Verifier:
         round2: Round2,
         challenge: bytes,
     ) -> VerificationResult:
+        """Check one proof: authenticate the trace, match the claimed output, derive the paths
+        from ``challenge``, anchor the input to ``query`` and run the local checks along every path."""
         architecture = self._architecture
         failures: list[CheckFailure] = []
 

@@ -1,8 +1,9 @@
 """The Kpre client's one-time precomputation (``Verifier.precompute``: ``u = chi A`` for every weight matrix): float64
 limb products against the native exact field product (CPU) or int8 GEMMs (GPU), on the same challenges.
 
-The client's key "12.7 s for Llama-2-7B on 8 Xeon threads" of ``sections/ext_discussion.tex`` (its float64
-counterpart is the "before" of this A/B; the GPU path is measured alongside).
+The time the Kpre client takes to derive its key for Llama-2-7B on 8 CPU threads (``\\KpreKeyLlama`` in
+``sections/ext_discussion.tex``; its float64 counterpart is the "before" of this A/B; the GPU path is measured
+alongside).
 
     python -m experiments.improvements.fold_ab --model llama2-7b --devices cpu cuda --reps 3
     python -m experiments.improvements.fold_ab --model gpt2 --layers 1 --reps 1 --threads 2      # a laptop check
@@ -25,13 +26,13 @@ weights and the challenges only, so no query is loaded.  Refused: shapes without
 checkpoint (GPT-2) and ``--prob-max`` (the recipe fixes the scale).
 
 Record (one JSON line per device and path ``float64`` / ``default``): ``model``, ``real`` (the checkpoint; None for
-random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.fields`), ``layers``,
-``precompute_s`` (the median), ``all_s``, the number of weight matrices and their entries, ``equal_to_float64``, the
-repetitions ``reps`` of the security parameters, the threads, ``prob_max`` (the graph's attention probabilities'
-scale), the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its 6.7 GB of int8 weights in
-host memory; its float64 path took 107 s per run on 8 threads of a Xeon Silver 4114, the native path 12.7 s.  With
-``--real`` the checkpoint is loaded in fp32 and calibrated on the CPU first (host memory: its fp32 weights, 27 GB for
-Llama-2-7B, next to the integer graph).
+random weights), ``recipe``, ``smooth``, ``calib_seq`` (:func:`experiments.common.real_cells.recipe_fields`),
+``layers``, ``precompute_s`` (the median), ``all_s``, the number of weight matrices and their entries,
+``equal_to_float64``, the repetitions ``reps`` of the security parameters, the threads, ``prob_max`` (the graph's
+attention probabilities' scale), the implementation status (``native``) and ``env``.  The full Llama-2-7B holds its
+6.7 GB of int8 weights in host memory; on 8 threads of a Xeon Silver 4114, for example, its float64 path took 107 s
+per run and the native path 12.7 s.  With ``--real`` the checkpoint is loaded in fp32 and calibrated on the CPU first
+(host memory: its fp32 weights, 27 GB for Llama-2-7B, next to the integer graph).
 """
 from __future__ import annotations
 

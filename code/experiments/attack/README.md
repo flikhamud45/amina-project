@@ -136,8 +136,8 @@ repository; this command regenerates it.
 ## Reproducing the paper's numbers
 
 The run package's `attack` tier (`bash code/experiments/package/run.sh --platform <name> attack`) runs every
-command below and writes the records to `logs/<name>/attack/`; each command also runs on its own. In order, from `code/` with
-`PYTHONPATH="src;."` on Windows or `PYTHONPATH=src:.` elsewhere:
+command below and writes the records to `logs/<name>/attack/`; each command also runs on its own. In order, from
+`code/` with `PYTHONPATH="src;."` on Windows or `PYTHONPATH=src:.` elsewhere:
 
 ```bash
 # MNIST (CPU, about 70 min in all; the stored models of artifacts/models are used)
@@ -158,8 +158,8 @@ python -m experiments.attack.inrange_llm --model facebook/opt-6.7b --layers 8 16
 python -m experiments.attack.adaptive_game_llm --threads 8 --device cuda   # one RTX 2080 Ti, about 13 min
 ```
 
-On a SLURM cluster, the two GPU jobs ran with these resources (one GPU, 8 cores and a 3-hour limit each; 48 GB of host
-memory for `attack_llm`, 32 GB for `adaptive_game_llm`), with `HF_HOME` exported and `OMP_NUM_THREADS=8`, e.g.
+On a SLURM cluster, the paper's two GPU runs used one GPU, 8 cores and a 3-hour limit each (48 GB of host memory for
+`attack_llm`, 32 GB for `adaptive_game_llm`), with `HF_HOME` exported and `OMP_NUM_THREADS=8`, e.g.
 `sbatch --gres=gpu:1 -c 8 --mem=48G -t 03:00:00 --wrap "cd code && PYTHONPATH=src:. python -m experiments.attack.attack_llm"`.
 
 The CNN attack cells (*Larger models*) are part of the benchmark: the run package's `bench` tier runs
@@ -167,12 +167,12 @@ The CNN attack cells (*Larger models*) are part of the benchmark: the run packag
 `tables_l40s/measured_summary.csv` (`attack_float flip_success`, `sampling p_detect_penultimate`,
 `p_detect_min_node`, `paths_needed_penultimate`) from the stored `raw_l40s/` records without a GPU. The final run's
 `bench` tier writes the same cells to `raw_final/`, and `paper/numbers.py` reads them from `tables_final/`
-(`aggregate.py --platform final`); the stored tables give the values the paper prints before the run.
+(`aggregate.py --platform final`); the stored tables give the values the paper prints before the final run.
 
 **What reproduces exactly.** On one machine the MNIST records are deterministic given the stored models, except the
 rates from real protocol runs with fresh challenges (`triggered_acceptance_empirical`, the rates of
 `reproduction.json`, `protocol_accepts` when below 100%). Across machines and library builds the searches can pick
-other neurons. A rerun of the current code on a Windows laptop (torch 2.2.2, CPU) gives every deterministic value of
+other neurons. A rerun on a Windows laptop CPU (torch 2.2.2) gives every deterministic value of
 `attack.json` to 1e-9, but moves some values of the other two stored records: `defence.json`'s
 `zero_blind_spot.mean_support` 14.0 (stored 14.35), `natural_zero_fraction_at_chosen_neurons` 66.0% (65.3%) and
 gradient saliency's `detection_evasive` 0.0163% (0.0157%); in `adaptive_game_mlp_mnist.json` (layer 1) the largest

@@ -28,6 +28,8 @@ __all__ = ["OpShape", "decoder_shapes", "decoder_claim_columns", "expected_multi
 
 @dataclass(frozen=True)
 class OpShape:
+    """The shape of one weight op, enough to size its commitment and proof without its weights."""
+
     name: str
     n_rows: int
     row_length: int

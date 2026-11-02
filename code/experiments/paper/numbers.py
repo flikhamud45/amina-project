@@ -30,8 +30,9 @@ Inputs (nothing here runs a model):
 * the published systems' values (``artifacts/comparison/tables/reported_curated.csv``), zkLLM's prover on the
   run's GPU model (the run's ``zkllm`` tier, ``--logs``/``zkllm/summary.csv``, when it holds both models on the
   run's GPU, else the stored runs, ``artifacts/results/zkllm_l40s/``), the formulas of the spot-checking schemes
-  and of the path protocol (``attack/sok.py``: ``tab:sok``, ``tab:paths``) and, for ``tab:params``, ``tab:setup`` and the break-even,
-  the library's parameters and byte model (several minutes on a laptop CPU; ``--no-byte-model`` skips them).
+  and of the path protocol (``attack/sok.py``: ``tab:sok``, ``tab:paths``) and, for ``tab:params``, ``tab:setup``
+  and the break-even, the library's parameters and byte model (several minutes on a laptop CPU; ``--no-byte-model``
+  skips them).
 
 Outputs (``--out``, default ``paper_sp2027/generated/``; ``--check`` writes nothing):
 
@@ -50,14 +51,14 @@ Outputs (``--out``, default ``paper_sp2027/generated/``; ``--check`` writes noth
   with ``--schematics`` also the schematic figures (:mod:`experiments.paper.figures`).
 
 ``paper_sp2027/main.tex`` inputs each file from ``generated/`` when it exists and from ``fallback/`` (the values the
-paper prints today) otherwise.
+paper prints before the final run) otherwise.
 
 Checks: an honest query rejected, a tamper accepted, a byte accounting, serving or A/B check that failed, a setup
 proof rejected, an attribution whose float copy failed a check or whose integer graph is not the quality tier's cell
 of the same graph (:func:`experiments.paper.records.cross_checks`), the smoke's verdicts, jobs that name more than one
 GPU model or CPU model (each job's node line and records, :func:`machine_check`, which names the jobs of each model;
-the report's ``machines:`` line lists the nodes and drivers, which may differ), builds of one certified model whose digests, weights or commitment roots differ
-(:func:`experiments.paper.macros.digest_agreement`), a table cell that disagrees with the macro printing the same
+the report's ``machines:`` line lists the nodes and drivers, which may differ), builds of one certified model whose
+digests, weights or commitment roots differ (:func:`experiments.paper.macros.digest_agreement`), a table cell that disagrees with the macro printing the same
 value (:data:`SAME_VALUE`; in the written files and in ``paper_sp2027/fallback/``), a statement of the text that the
 run's values contradict (``CHECK FAILED text:``, :data:`experiments.paper.macros.TEXT_CLAIM`): each is a ``CHECK
 FAILED`` line; a log line that starts with ``{`` and is not a record of a known kind is a ``PARSE`` line.  The report
@@ -255,6 +256,8 @@ def telemetry_report(logs: Path) -> tuple[list[str], list[str]]:
 
 
 def platform_text(run: R.Run, bench: Bench) -> str:
+    """The report's and the table headers' platform line: the run's GPU and CPU (the records' environments, else the
+    benchmark tables' prover and client)."""
     env = run.environment()
     provers, clients = bench.hardware()
     gpu = env["gpu"] or next(iter(provers), None)
@@ -566,6 +569,7 @@ def real_in(run, bench, tier: str) -> bool:
 
 
 def build(args) -> int:
+    """Read, check, build and (without ``--check``) write; print the report and return the exit status."""
     logs = Path(args.logs)
     problems: list[str] = []
     recs = R.read_logs(logs, problems) if logs.is_dir() else []

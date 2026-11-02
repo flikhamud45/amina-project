@@ -1,6 +1,6 @@
 """Evidence that a timed phase ran on a quiet machine (measurement only: nothing here changes what runs).
 
-A shared machine whose batch scheduler does not confine a job to its cores lets other users' load slow a
+A shared machine whose batch scheduler does not confine a job to its cores lets other jobs' load slow a
 phase that runs on the host CPU (the CPU verifier, the prover's encoding, a GPU client's decoding, the
 commitment) several-fold.  Around such a phase, :func:`begin` takes a snapshot and
 :func:`add` takes a second one and stores the difference under the phase's name:
@@ -124,6 +124,7 @@ def begin() -> Snapshot | None:
 
 
 def wait_fraction(d: dict) -> float | None:
+    """``wait_frac`` of a phase record ``d`` (module docstring), or ``None`` without schedstat or runnable time."""
     run, wait = d.get("run_ns"), d.get("wait_ns")
     if run is None or wait is None or run + wait <= 0:
         return None

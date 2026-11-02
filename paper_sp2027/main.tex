@@ -11,6 +11,7 @@
 \usepackage{amssymb}
 \usepackage{amsthm}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{graphicx}
 \usepackage[caption=false,font=footnotesize]{subfig}
 \usepackage{xcolor}
@@ -21,12 +22,12 @@
 
 % ---- visible marker for open items -------------------------------------------------
 \newcommand{\todo}[1]{{\color{red}\textbf{[TODO: #1]}}}
-% a value of fallback/ printed before the final run, which the run replaces (generated/ never uses it)
+% marks a value taken from fallback/ (an earlier run's value); generated/ never uses it
 \newcommand{\notready}[1]{\textcolor{orange!85!black}{#1}}
 
-% ---- the run's numbers (code/experiments/paper/numbers.py) ------------------------------
+% ---- measured numbers (code/experiments/paper/numbers.py) -------------------------------
 % Each table body and the text numbers (numbers.tex) are read from generated/<name>.tex when it exists, else from
-% fallback/<name>.tex, which holds the values printed before the final run.  \pvitable reads a file with TeX's
+% fallback/<name>.tex, which holds the values of an earlier run.  \pvitable reads a file with TeX's
 % primitive \input, which is expandable: a table body may start with \multicolumn, and the paper's \bottomrule may
 % follow it.
 \makeatletter

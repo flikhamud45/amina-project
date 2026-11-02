@@ -7,37 +7,41 @@
 \subsection{Status of the Measurements}
 \label{ext:disc-status}
 
-Our measurements come from one run of the artifact's
-run package, on one \PlatformGpu{} and 8 threads of an \PlatformCpu{}, with one version of
-the code; other systems' costs are quoted from their papers, and zkLLM's public demo ran on the
-\PlatformGpu{} \ZkllmSameGpuRun{} (Appendix~\ref{ext:disc-options}); each
-implementation improvement is measured against the code path it replaces on the same queries
-(Appendix~\ref{app:eval-improve}). Models are measured in full, except where a table gives a build of
-$b$ of $L$ blocks and the long prompts of Appendix~\ref{app:eval-long}, which extrapolate 2- to 4-block builds
-(checked against the full model at 2{,}048 and 8{,}192 tokens); the security parameters, the setup proof's size and the per-prefix comparison of
-Section~\ref{sec:gen} follow from the byte model. The client's peak memory is measured in a process
-of its own that holds only its key and the embedding tables it looks up ($\Kpre$) or the roots ($\sC$), and one proof
-(Appendix~\ref{app:eval-untrusted},
-Table~\ref{tab:memory}), since the timed cells run the prover and the verifier in one process.
+Our measurements come from one run of the artifact's benchmark scripts, on one \PlatformGpu{}
+and 8 threads of an \PlatformCpu{}, with one version of the code. Other systems' costs are quoted
+from their papers; zkLLM's public demo also ran on the \PlatformGpu{} \ZkllmSameGpuRun{}
+(Appendix~\ref{ext:disc-options}). Each implementation improvement is measured against the code
+path it replaces on the same queries (Appendix~\ref{app:eval-improve}). Models are measured in full,
+except where a table gives a build of $b$ of $L$ blocks and for the long prompts of
+Appendix~\ref{app:eval-long}, which extrapolate 2- to 4-block builds (checked against the full model
+at 2{,}048 and 8{,}192 tokens). The security parameters, the setup proof's size and the per-prefix
+comparison of Section~\ref{sec:gen} are computed from the protocol's parameter rules and byte counts,
+not measured. The
+client's peak memory is measured in a process of its own that holds only its key and the embedding
+tables it looks up ($\Kpre$) or the roots ($\sC$), and one proof (Appendix~\ref{app:eval-untrusted}),
+since the timed cells run the prover and the verifier in one process.
 
 \subsection{Real Weights, Model Quality and V1}
 \label{ext:disc-real}
 
-\para{Real weights and model quality.} The costs were measured on the real checkpoints, and on random int8
-weights of the same shapes for GPT-2 and beyond a checkpoint's trained context. Weights change only the
-compressed size of the claims and of V1's values, as the real cells' random-weight twins show. On the
+\para{Real weights.} The costs were measured on the real checkpoints, and on random int8 weights
+of the same shapes for GPT-2 and beyond a checkpoint's trained context. The weights' values change
+only the compressed size of the claims and of V1's values, as the real cells' random-weight twins
+show. On the
 certified OPT-1.3B, real claims compress better than random ones: v0's proof is \RealProofSmaller{}\% smaller
 (\RealOptMKLongReal{} against \RealOptMKLongRandom{}\,GB in $\Kpre$ at 2{,}048 tokens), while V1's values take about the same
 space, so V1 shrinks the proof by \VOneRealOptMLongC{}$\times$ in mode $\sC$ at 2{,}048 tokens against \VOneRandomOptMLongC{}$\times$
-with random weights; some residual operations of real OPT weights also have multipliers above $2^{29}$
-and stay clear under (P3). The prover's and the verifier's times are within \RealProveWithin{}\% and
+with random weights. Some residual operations of real OPT models also have multipliers above
+$2^{29}$; they fail rule (P3), so V1 sends their claims in the clear. The prover's and the verifier's times are within \RealProveWithin{}\% and
 \RealVerifyWithin{}\% of random weights' (Appendix~\ref{app:eval-real}). In $\Kpre$ at 2{,}048 tokens
 \RealAcceptedClause{}, and every tamper rejected. For the full real Llama-2-7B, with the main recipe of
 Section~\ref{sec:quality}, \RealLlamaAccepted{} of \RealLlamaQueries{} queries are accepted and \RealLlamaTampersRejected{} of \RealLlamaTampers{} tampers
 rejected, with a \RealLlamaProof{}\,GB proof (\RealLlamaSmaller{}\% smaller than with random weights) checked in \RealLlamaVerify{}\,s on 8 threads of the
 \PlatformCpu{} (\RndLlamaVerify{}\,s with random weights). At 64 tokens both modes accept every query and reject every
 tamper, with proofs \RealLlamaShortSmaller{}\% smaller and the verifier within \RealLlamaShortVerifyWithin{}\% of random weights; V1 makes
-its 2{,}048-token proof \VOneRealLlamaRatio{}$\times$ smaller. With smoothing through the norm's gains, the certified OPT-125M,
+its 2{,}048-token proof \VOneRealLlamaRatio{}$\times$ smaller.
+
+\para{Model quality.} With smoothing through the norm's gains, the certified OPT-125M,
 OPT-1.3B and OPT-6.7B are within factors of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 at 2{,}048 tokens
 (Section~\ref{sec:quality}); with one scalar gain OPT-6.7B is \QualityScalarExcessOptL{}\% above. With a fixed public prefix and a balance of
 the SwiGLU product, Llama-2-7B (our benchmark's exact structure) is within $\times$\LlamaSevenRatio{} (95\% interval
@@ -54,9 +58,10 @@ residual stream cannot hold it; a per-token residual scale would change the grap
 numbers concern only how well that model serves.
 
 \para{V1.} V1 is an option, not a replacement. At 2{,}048 tokens it makes the proof
-\VOneRatioRandom{}$\times$ smaller on the real checkpoints, but it makes the prover about \VOneProverRatioAbout{} times slower and
-the CPU verifier \VOneVerifyRatioLlama{}$\times$ slower than v0's on the full Llama-2-7B at 2{,}048 tokens
-(\VOneVerifyRatioLong{}$\times$ on the 2{,}048-token builds of Table~\ref{tab:eval-v1}). For the client alone (transfer plus
+\VOneRatioRandom{}$\times$ smaller on the real checkpoints, but the prover about
+\VOneProverRatioAbout{} times slower, and the CPU verifier \VOneVerifyRatioLlama{}$\times$ slower than
+v0's on the full Llama-2-7B (\VOneVerifyRatioLong{}$\times$ on the 2{,}048-token builds of
+Table~\ref{tab:eval-v1}). For the client alone (transfer plus
 verification), V1 is nevertheless faster than v0 on links slower than about \BreakevenVOneFaster{}\,Gb/s, and it beats
 re-execution down to \BreakevenLinkVOne{}\,Gb/s, against \BreakevenLinkLong{}\,Gb/s for v0. Llama-2-13B at 2{,}048 tokens is
 measured as the build of Table~\ref{tab:eval-v1}. Mode $\sK$ and the streaming GPU verifier do not
@@ -74,7 +79,8 @@ query. The integer forward pass is bit-identical to the claims and so a complete
 \CpuReexecShort{}\,s at 64 tokens and \CpuReexecLong{}\,s at 2{,}048 tokens on 8 threads of an \PlatformCpu{}, and \GpuIntShort{} and
 \GpuIntLong{}\,s on an \PlatformGpu{} with int8 tensor cores (Table~\ref{tab:options}). Floating-point
 re-execution (fp32 on the CPU: \CpuFloatShort{} and \CpuFloatLong{}\,s; fp16 on the
-GPU: \GpuFloatShort{} and \GpuFloatLong{}\,s) cannot confirm an exact answer. A CPU client that could keep the weights can
+GPU: \GpuFloatShort{} and \GpuFloatLong{}\,s) computes the floating-point model, not the integer one, so it cannot confirm the claims bit for
+bit. A CPU client that could keep the weights can
 instead keep a key derived from them (mode $\Kpre$) and run our verifier, which takes \CpuVerifyShort{} and \CpuVerifyLong{}\,s,
 \CpuRatioShort{}$\times$ and \CpuRatio{}$\times$ faster than exact re-execution.
 On a GPU, re-execution wins: our streaming GPU verifier takes \OptMGpuVerify{}\,s for OPT-1.3B in $\Kpre$ at 2{,}048
@@ -100,15 +106,16 @@ key is about 48\,MB.
 \para{zkSNARKs.} zkLLM~\cite{zkllm} proves a 2{,}048-token Llama-2-7B prompt in 10.3\,min on an
 A100, with a 183\,kB proof that its verifier checks in 2.36\,s, and hides the weights. zkAgent,
 which proves a generated sequence in one pass, reports 0.30\,s per token for GPT-2~\cite{zkagent}.
-On a 2{,}048-token Llama-2-13B prompt our prover on the \PlatformGpu{} is \ZkllmProverFactor{}$\times$ faster than zkLLM, but zkLLM
-also proves the operations without weights and hides the weights (Table~\ref{tab:eval-compare}).
+On a 2{,}048-token Llama-2-13B prompt our prover on the \PlatformGpu{} is \ZkllmProverFactor{}$\times$ faster than zkLLM's reported
+time, but zkLLM also proves the operations without weights and hides the weights (Table~\ref{tab:eval-compare}).
 On the \PlatformGpu{} itself (\ZkllmSameGpuRun{}), zkLLM's public demo (commit 993311e) takes about
 \ZkllmSameGpuProverLlama{}\,s to prove a 2{,}048-token Llama-2-7B prompt and \ZkllmSameGpuProverLlamaL{}\,s for Llama-2-13B,
-\ZkllmSameGpuFactorLlama{}$\times$ and \ZkllmSameGpuFactorLlamaL{}$\times$ our prover's time on prompts of the same length (ours with random int8 weights of the same shapes; mode $\sC$, interactive,
+\ZkllmSameGpuFactorLlama{}$\times$ and \ZkllmSameGpuFactorLlamaL{}$\times$ our prover's time on prompts of the same length (ours in mode $\sC$, interactive,
 as in Table~\ref{tab:eval-compare}). These times count zkLLM's proof binaries alone, not its one-time
-setup and commitment or the scripts around the binaries; they were measured on two decoder layers
-(three repetitions each) and multiplied by the number of layers, the first skip connection of each
-layer, which its demo does not run, being counted as the second. They cover the decoder layers only.
+setup and commitment or the scripts around the binaries, and cover the decoder layers only. They
+were measured on two decoder layers (three repetitions each) and multiplied by the number of layers;
+the first skip connection of each layer, which its demo does not run, is counted at the time of the
+second.
 Table~\ref{tab:zkllm-lengths} repeats the comparison at shorter prompts, with zkLLM's setup and commitment run once
 per job and shared by its lengths, as they depend on the weights alone. Across the lengths that its demo proves,
 zkLLM's prover takes \ZkllmSameGpuFactorLengthRange{}$\times$ our prover's time, and
@@ -118,10 +125,11 @@ the attention scores' softmax and $2^{22}$ for SwiGLU), so its demo, run unchang
 prompts; the table marks such a length as failed.
 
 \begin{table}[t]
-  \caption{zkLLM's public demo (commit 993311e) against our prover on the \PlatformGpu{} at each prompt length $T$:
-  the prover's time for the full model (zkLLM: its proof binaries on two decoder layers times the layers; ours: mode
-  $\sC$, interactive, $\lambda{=}128$, random int8 weights of the same shapes) and zkLLM's time over ours; fails:
-  zkLLM's demo stopped with an error at this length}
+  \caption{On the same GPU, zkLLM's prover is much slower than ours. zkLLM's public
+  demo (commit 993311e) against our prover on the \PlatformGpu{} at each prompt length $T$: the
+  prover's time for the full model (zkLLM: its proof binaries on two decoder layers times the
+  layers; ours: mode $\sC$, interactive) and zkLLM's time over ours; fails: zkLLM's demo stopped
+  with an error at this length}
   \label{tab:zkllm-lengths}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -136,14 +144,16 @@ prompts; the table marks such a length as failed.
   \end{tabular}
 \end{table}
 
-\para{Ours.} In mode $\sC$ the client holds the 32-byte Merkle roots of the weights and no weights. A 64-token
-proof is \ProofLlamaShortC{}, about \ProofRatioLlamaShort{}$\times$ smaller than the int8 weights, and is checked in \VerifyLlamaShortCCpu{} on 8
-threads of the \PlatformCpu{} or \VerifyLlamaShortCGpu{} on the \PlatformGpu{}. Of it, \ColumnsLlamaShort{} are opened columns, which do not shrink with
-shorter prompts. At 2{,}048 tokens the proof is \ProofLlamaLongC{} (\ProofLlamaLongK{} in $\Kpre$), about the size of the
-weights, and takes \TransferLlamaLong{}\,s to transfer at 10\,Gb/s. A client that sends
-more than about \BreakevenQueriesShort{} short prompts therefore receives more bytes than a download of the
-weights, which are only \BreakevenQueriesLong{}$\times$ the size of one long prompt's proof, and the protocol pays off only for a client that cannot store or run the model, or
-will not (Figure~\ref{fig:breakeven}). A $\Kpre$ client needs the weights once, to compute its key
+\para{Ours.} In mode $\sC$ the client holds the 32-byte Merkle roots of the weights and no weights.
+A 64-token proof is \ProofLlamaShortC{}, about \ProofRatioLlamaShort{}$\times$ smaller than the int8
+weights, and is checked in \VerifyLlamaShortCCpu{} on 8 threads of the \PlatformCpu{} or
+\VerifyLlamaShortCGpu{} on the \PlatformGpu{}. Of it, \ColumnsLlamaShort{} are opened columns, which
+do not shrink with shorter prompts. At 2{,}048 tokens the proof is \ProofLlamaLongC{}
+(\ProofLlamaLongK{} in $\Kpre$), about the size of the weights, and takes \TransferLlamaLong{}\,s to
+transfer at 10\,Gb/s. A client that sends more than about \BreakevenQueriesShort{} short prompts
+therefore receives more bytes than a download of the weights, which are only
+\BreakevenQueriesLong{}$\times$ the size of one long prompt's proof. The protocol thus pays off only for a
+client that cannot or will not store and run the model (Figure~\ref{fig:breakeven}). A $\Kpre$ client needs the weights once, to compute its key
 (\KpreKeyLlama{}\,s for Llama-2-7B on 8 threads of the \PlatformCpu{}), and then keeps \KpreStoreGB{}\,GB instead of them:
 \KpreKeyMB{}\,MB of secret vectors and folded rows and the \KpreEmbedMB{}\,MB embedding table. A provider may also serve with the exact model and prove
 later, on request, with the same proof; it then still pays the integer engine's cost over fp16
@@ -181,7 +191,7 @@ sees neither the weights nor a range proof on them does not learn which model th
 with a degenerate structure keep the declared shapes while being cheap to evaluate. With an
 untrusted commitment (Section~\ref{sec:setup-proof}), the bound (P4) of V1 and the claim range of
 v0 must be published with the model; the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove and
-\SetupVerifierLlama{} to verify. The exact sampler (Section~\ref{sec:gen-sampling}) is
+\SetupVerifierLlama{} to verify. The integer sampler (Section~\ref{sec:gen-sampling}) is
 a fixed approximation of softmax sampling (total-variation distance with median \TvTopK{} on OPT-1.3B at
 $\tau=1$, $k=50$), the proof
 does not show that the client's seed was random, and nucleus sampling is not implemented.
@@ -192,7 +202,8 @@ network, whose rows are correlated. On trained networks we report the detection 
 we found, which bounds each sampler's worst-case detection from above. We do not claim that the
 worst-case instance embeds in a transformer, since the LayerNorm before the MLP prevents feeding it
 the required patterns (Remark~\ref{rem:scope}). With held-out ranges, the adaptive game on the MNIST
-MLP leaves every implementable value-aware sampler, and their best mixture, below $27.7/N$ per path;
+MLP leaves every implementable value-aware sampler, and their best mixture, below $27.7/N$ per path,
+the rate above which fewer than $N$ paths would reach $2^{-40}$;
 only gradient saliency, which needs the whole model and so no spot-checking verifier can compute,
 exceeds it. Our OPT-6.7B attack writes values outside the neurons' natural ranges; on OPT-1.3B, edits
 that keep every value inside ranges calibrated on held-out text succeed (Section~\ref{sec:break}),

@@ -60,8 +60,8 @@ and no proximity test.
 
 \para{Concrete security.} At $\lambda = 128$ the two new terms of Theorem~\ref{thm:v1} take two
 extra shares of the union bound, which changes neither $r$ nor the column counts.
-Table~\ref{tab:params} gives them for Llama-2-7B at 2{,}048 tokens, and the last subsection of this
-part for Llama-2-13B, the largest model we consider.
+Table~\ref{tab:params} gives them for Llama-2-7B at 2{,}048 tokens, and
+Appendix~\ref{ext:v1-largest} for Llama-2-13B, the largest model we consider.
 
 \subsection{Implementation of V1}
 
@@ -79,25 +79,24 @@ on the GPU). Factoring the current variable's eq term out of each round polynomi
 numerators are all 1; a dedicated path reads only the real rows' denominators, evaluates $\mathsf
 d_L + \mathsf d_R + \eta\, \mathsf d_L \mathsf d_R$ per pair, and adds the padding rows' term $\eta
 (1 - \sum \Veq)$ in closed form. On the \PlatformGpu{} an instance of $2^{25}$ leaves then takes
-\GkrSecondsLarge{}\,s (\GkrNsPerLeaf{}\,ns per leaf). The run's smoke job (\SmokeTests{} tests) passes,
-including honest queries in eight configurations, a tampered trace value with honestly
-recomputed later layers (rejected at the final check in $\sC$ and at the secret-vector check in
-$\Kpre$), fake or omitted exceptions, multiplicity cheats and tampered GKR and fold messages. V1
-also accepts the sampled generation of Section~\ref{sec:gen}, as the LM head stays clear.
+\GkrSecondsLarge{}\,s (\GkrNsPerLeaf{}\,ns per leaf). The artifact's smoke tests (\SmokeTests{}
+tests) pass on the platform. For V1 they cover honest queries in eight configurations, a tampered
+trace value with honestly recomputed later layers (rejected at the final check in $\sC$ and at the
+secret-vector check in $\Kpre$), fake or omitted exceptions, multiplicity cheats and tampered GKR
+and fold messages. V1 also supports the sampled generation of Section~\ref{sec:gen}, since the LM
+head stays in the clear set.
 
-\subsection{Hardening of the V1 Checks}
+\subsection{Where the V1 Rules Are Checked}
 
-An earlier version of the implementation lacked five of the properties stated in
-Section~\ref{sec:v1} and in the checks of the soundness proof. None of the gaps allowed a forgery
-against the models we evaluate. Two allowed forgeries on other models: the $\Kpre$ verifier never
-evaluated (P4), as its public graph has no weights (it now evaluates it from the weights when it derives its key), and a clamp wider
-than int8 broke the bound on $|L|$ (now excluded by (P1)). Two concerned hygiene: folds were
-accepted with coefficients in $[p, 2^{31})$ (an alias, not a forgery), and a defence-in-depth range
-check on the inputs of cut operations was missing; both are now enforced. The fifth limits
-completeness: more than $2^{29}$ clamped entries cannot be encoded, as the exception bin is outside
-(P5). In mode $\sC$, (P4) is a property of the committed model, checked when the honest commitment
-is computed; with an untrusted commitment (Section~\ref{sec:setup-proof}) the bound must be
-published with the model, for v0 and V1 alike.
+Rules (P4) and (P1) depend on the model; without their checks, some models, although none that we
+evaluate, would admit forgeries. Rule (P4) needs the weights: in mode $\sC$ it is a property of the
+committed model, checked when the honest commitment is computed, and the $\Kpre$ verifier, whose
+public graph has no weights, evaluates it from the weights when it derives its key. With an
+untrusted commitment (Section~\ref{sec:setup-proof}) the bound must be published with the model,
+for v0 and V1 alike. Rule (P1) excludes clamps wider than int8, which would break the bound on
+$|L|$. The verifier also rejects fold coefficients in $[p, 2^{31})$, which alias field elements, and
+range-checks the inputs of cut operations as defence in depth. One limit affects completeness only:
+the exception bin of width 1 is not covered by (P5), and multiplicities are encoded like claims, below $2^{29}$, so a proof with $2^{29}$ or more clamped entries cannot be encoded.
 
 \subsection{Proof Size and Running Time of V1}
 
@@ -105,11 +104,11 @@ Table~\ref{tab:eval-v1} gives the proof sizes of V1 and v0 on the same queries, 
 Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
 
 \begin{table}[t]
-  \caption{Time of V1 against v0 in seconds, with the GKR share of V1's prover (Fiat--Shamir,
-  $\lambda{=}128$, mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points, GKR instances of
-  at most $2^{\ParamsLmax{}}$ leaves, random int8 weights, the builds of Table~\ref{tab:eval-v1}; the prover
-  on one \PlatformGpu{}, the verifier on 8 threads of an \PlatformCpu{}, medians over the timed
-  queries). Proof sizes are in Table~\ref{tab:eval-v1}}
+  \caption{V1's prover and CPU verifier are slower than v0's; the GKR takes a large share of V1's
+  prover time. Seconds on the same queries, with the builds and weights of
+  Table~\ref{tab:eval-v1}, which gives the proof sizes; Fiat--Shamir, $\lambda{=}128$; GKR instances of at most
+  $2^{\ParamsLmax{}}$ leaves; prover on one \PlatformGpu{}, verifier on 8 threads of an
+  \PlatformCpu{}; medians}
   \label{tab:v1}
   \centering
   \footnotesize
@@ -125,11 +124,11 @@ Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
   \end{tabular}
 \end{table}
 
-\para{Proof size.} At 2{,}048 tokens V1 is \VOneRatioRandomExact{}$\times$ smaller on every full
+\para{Proof size.} At 2{,}048 tokens V1's proof is \VOneRatioRandomExact{}$\times$ smaller on every full
 model; the full OPT-1.3B proof drops from \VOneOptMCVZeroGB{} to \VOneOptMCVOneGB{}\,GB in mode $\sC$ and from \VOneOptMKVZeroGB{} to
 \VOneOptMKVOneGB{}\,GB in $\Kpre$. The values shrink \VOneValuesRatio{}$\times$: an int8 value, and a residual increment,
-compress to fewer bits than a claim. The parts that do not grow with the
-prompt grow instead: eight folded rows instead of $r$, $y$ over $\Fext$ for transposed matrices,
+compress to fewer bits than a claim. The parts that do not depend on the prompt length become
+larger: eight folded rows instead of $r$, $y$ over $\Fext$ for transposed matrices,
 and the new multiplicities and GKR transcripts (at most \VOneExtrasMax{}\,MB in every measured build). GPT-2 at 64
 tokens thus gains only \VOneRatioShortC{}$\times$ ($\sC$) and \VOneRatioShortK{}$\times$ ($\Kpre$), and the Llama-2-13B build of
 Table~\ref{tab:eval-v1}, whose opened columns are a larger share of its proof, \VOneRatioLargeC{}$\times$ in $\sC$.
@@ -145,31 +144,36 @@ V1's values; real OPT weights also have residual multipliers
 above $2^{29}$, whose operations stay clear (P3).
 
 \para{Prover and verifier.} With the GKR on the GPU and instances of at most $2^{\ParamsLmax{}}$ leaves, the
-prover pays about \VOneNsPerClaim{}\,ns per cut claim end to end, \VOneProverShare{}\% of its time. At 2{,}048 tokens it takes
+GKR takes \VOneProverShare{}\% of V1's prover time, and the whole prover about \VOneNsPerClaim{}\,ns per cut
+claim. At 2{,}048 tokens it takes
 \VOneProverLong{}\,s, \VOneProverRatioLong{}$\times$ the time of v0's prover, whose int8 forward pass is fast on this
 GPU. The CPU verifier takes \VOneVerifyRatioLong{}$\times$ v0's verifier's time at 2{,}048 tokens and
 \VOneVerifyRatioMedium{}$\times$ for GPT-2 at 512 tokens, mostly for the final check's two exact products per claim,
 $L_\ell e$ and $W_\ell e$. On the full Llama-2-7B in $\Kpre$ at 2{,}048 tokens (8 threads of the
 \PlatformCpu{}, Fiat--Shamir), V1's verifier takes \VOneVerifyLlama{}\,s with the batched GKR check and a native kernel for
 the final check's products, against \VOneVerifyLlamaBaseline{}\,s with the verifier they replace, on the same
-queries, and v0's verifier \VOneVZeroVerifyLlama{}\,s. V1 thus trades prover time
-for a proof \VOneRatioRandom{}$\times$ smaller on the real checkpoints, which pays off where moving and storing
-bytes costs more than seconds of GPU time.
+queries, and v0's verifier \VOneVZeroVerifyLlama{}\,s. V1 thus trades prover and verifier time
+for a proof \VOneRatioRandom{}$\times$ smaller on the full models, which pays off where moving and storing
+bytes costs more than seconds of computation.
 
 \subsection{Limitations of V1}
 
-Mode $\sK$ and the streaming GPU verifier do not support V1 yet. The non-streaming verifier with its
+Mode $\sK$ and the streaming GPU verifier do not support V1. The non-streaming verifier with its
 tensors on the \PlatformGpu{} (V1's GKR and final checks stay on the CPU) checks a 2{,}048-token $\Kpre$
 query of the full OPT-1.3B with V1 in \VOneGpuVerifyOptM{}\,s and of the full Llama-2-7B in \VOneGpuVerifyLlama{}\,s, against
 \VOneGpuVZeroVerifyOptM{}\,s and \VOneGpuVZeroVerifyLlama{}\,s for v0 on the same queries. V1
 assumes one requantisation multiplier per operation, so per-row weight scales
 (Section~\ref{sec:quality}) need more widths, and CNNs that fuse ReLU into the requantisation are
-not covered. With V1's claims measured at each length (Appendix~\ref{app:eval-long}), the full Llama-2-7B proof still reaches the size of its int8 weights
-at about \BreakevenTokensVOne{} tokens instead of about \BreakevenTokens{}, and the sent values, like the claims, reveal
-information about the weights.
+not covered. With V1's claims measured at each length (Appendix~\ref{app:eval-long}), the full
+Llama-2-7B proof still reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens
+instead of about \BreakevenTokens{}. Like the claims, the sent values reveal information about the
+weights.
 
 \subsection{GKR Instances for the Largest Model}
+\label{ext:v1-largest}
 
-For Llama-2-13B at 2{,}048 tokens and $\lambda = 128$, the cut operations of mode $\sC$ form
-\VOneLargeInstances{} GKR instances of at most $2^{\VOneLargeBits{}}$ leaves each, with $\Nleaf=\VOneLargeLeaves{}$. Their
-terms in Theorem~\ref{thm:v1} sum to $2^{\VOneLargeGkrLog{}}$, against at most $2^{\VOneLargeLookupLog{}}$ for the lookup term.
+V1's new error terms stay far below $2^{-128}$ even for the largest model. For Llama-2-13B at
+2{,}048 tokens and $\lambda = 128$, the cut operations of mode $\sC$ form \VOneLargeInstances{} GKR
+instances of at most $2^{\VOneLargeBits{}}$ leaves each, with $\Nleaf=\VOneLargeLeaves{}$. Their
+terms in Theorem~\ref{thm:v1} sum to $2^{\VOneLargeGkrLog{}}$, and the lookup term is at most
+$2^{\VOneLargeLookupLog{}}$.

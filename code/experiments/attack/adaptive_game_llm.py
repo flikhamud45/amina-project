@@ -48,7 +48,8 @@ Prints one JSON line with the calibration and one line per (layer, cap).  Writes
 ``artifacts/results/adaptive_game_<model>.json``): ``model``, ``layers``, ``caps``, ``prompts``, ``tail_percentile``,
 ``calib_tokens``, ``edit_cap``, ``floors``, ``seed``, ``note``, ``env``, ``seconds`` and, per layer and cap,
 ``success_rate``, ``mean_min_support``, ``d_ff``, ``samplers.<name>.{detection_per_path,s_40}``,
-``best_single_sampler`` and ``mixture`` (``weights``, ``detection_per_path``, ``s_40``).  OPT-1.3B in fp32 needs
+``best_single_sampler`` (the same as ``best_single_implementable``: every sampler here is implementable) and
+``mixture`` (``weights``, ``detection_per_path``, ``s_40``).  OPT-1.3B in fp32 needs
 about 5.3 GB of GPU memory: one RTX 2080 Ti, about 13 min, with 8 cores and 32 GB of host memory.
 """
 
@@ -76,6 +77,7 @@ EDIT_CAP = 60
 
 
 def sampler_names(floors) -> list[str]:
+    """The family's sampler names, in the column order of the detection matrices."""
     return ["uniform", "static-importance", "contribution", *[f"floor-{e:g}" for e in floors],
             "tail-first", "zero-first"]
 

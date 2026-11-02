@@ -55,6 +55,7 @@ MODEL = "mlp_mnist_full"
 
 
 def build_samplers(network) -> dict:
+    """The four samplers of the sweep, by name."""
     importance = {index: weight_magnitude_importance(network, index)
                   for index, _ in enumerate(network.architecture.layers) if index < len(network.architecture) - 1}
     return {

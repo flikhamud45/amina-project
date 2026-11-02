@@ -6,7 +6,7 @@ static int8 scale of the residual stream cannot hold.
     python -m experiments.quality.llama_diag --model Qwen/Qwen3-4B-Base --recipes main smooth55 scalar4
     python -m experiments.quality.llama_diag --model Qwen/Qwen3-4B-Base --prefix 151643,151643 --recipes smooth55
     python -m experiments.quality.llama_diag --model Qwen/Qwen3-0.6B-Base --prefix none --no-qk-balance \\
-        --recipes scalar4 smooth55                                     # the graphs before the prefix and the balance
+        --recipes scalar4 smooth55                                     # without the prefix and the q/k-norm balance
     python -m experiments.quality.llama_diag --model Qwen/Qwen3-0.6B-Base --smoke --threads 2    # laptop
 
 For one WikiText-2 test window (the first ``--seq`` tokens of the test split), with calibration on ``--calib-windows``

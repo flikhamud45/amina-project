@@ -3,8 +3,9 @@
 WikiText-2 loaders of ``experiments.common.checkpoints`` replaced (no download).
 
 The refusals; the graph of a checkpoint's first blocks (the full graph's first blocks, op for op, the residual scale
-set on the whole checkpoint, for OPT and Llama-family alike); the whole model's op shapes as a real graph has them; ``open_ab.py``, ``fold_ab.py`` and
-``v1_phases.py`` end to end on the CPU, every variant on the same real graph and the same windows; and the
+set on the whole checkpoint, for OPT and Llama-family alike); the whole model's op shapes as a real graph has them;
+``open_ab.py``, ``fold_ab.py`` and ``v1_phases.py`` end to end on the CPU, every variant on the same real graph and
+the same windows; and the
 graph-building part of the GPU-only scripts (``forward_ab.py``, ``encode_ab.py``, ``gpu_profile.py``), which is what
 their GPU paths run.
 """
@@ -166,7 +167,7 @@ def test_first_blocks_of_a_llama_is_the_builders_n_layers(fake_llama):
     want, _ = hf_llama.build_llama_from_hf(real.model, real.calib.ids, prune_last=True, prefix_tokens=PREFIX,
                                            n_layers=1, **hf_llama.MAIN_RECIPE)
     assert got.digest() == want.digest()
-    assert len(real.model.model.layers) == real.model.config.num_hidden_layers == 2      # put back
+    assert len(real.model.model.layers) == real.model.config.num_hidden_layers == 2      # every block restored
     assert real.graph(True, 0)[0].digest() == real.graph(True, 2)[0].digest()
     assert (real.recipe, real.prefix_len) == ("main", 2)
 
@@ -326,6 +327,7 @@ def test_encode_ab_and_gpu_profile_setups_are_the_real_graph(fake_llama):
 
 
 def test_gpu_scripts_with_random_weights_are_unchanged():
+    """Without ``--real`` the GPU scripts' setups build the random-weight graph and prompts of ``build_decoder``."""
     from experiments.improvements import encode_ab, forward_ab, gpu_profile
     from pvi.models.decoder import build_decoder
     cfg = transformer.CONFIGS["gpt2"]

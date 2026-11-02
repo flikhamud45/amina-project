@@ -17,11 +17,12 @@
 \ifcsname theorem\endcsname\else\newtheorem{theorem}{Theorem}\fi
 \ifcsname lemma\endcsname\else\newtheorem{lemma}{Lemma}\fi
 
-\section{V1: Sending Int8 Values Instead of Claims}
+\section{V1: Smaller Proofs from Int8 Values}
 \label{sec:v1}
 
-At long prompts the proof consists mostly of claims, so V1, an option next to the protocol of
-Section~\ref{sec:defence} (v0), sends instead the int8 value that the next operation reads.
+At long prompts the proof of Section~\ref{sec:defence} (v0) consists mostly of claims. V1, an
+option next to v0, sends instead the int8 value that the next operation reads, and proves
+that the hidden claims map to these values.
 
 \subsection{Values and Windows}
 
@@ -31,8 +32,8 @@ requantisation $a = \Vrq_\ell(Z_\ell)$, with $\Vrq_\ell(z) = \mathrm{clamp}(\Vsh
 127)$, $\Vshift_\ell(z) = \lfloor (m_\ell z + 2^{29})/2^{30} \rfloor$ and a public integer
 $m_\ell$. The attention output and down projections (fc2) feed a residual addition of $\Delta =
 \Vshift_\ell(Z_\ell)$, which clamps only the sum. V1 sends $s_\ell = a_\ell$ or $\Delta_\ell$
-instead of $Z_\ell$. The verifier still recomputes every operation without weights ((S1) in
-Section~\ref{sec:protocol}) and so knows each input $X_\ell$; it must be convinced that the hidden
+instead of $Z_\ell$. The verifier still recomputes every operation without weights, as in step~(S1) of
+Section~\ref{sec:protocol}, and so knows each input $X_\ell$; it must be convinced that the hidden
 $Z_\ell = A_\ell \hat X_\ell$, with $\hat X_\ell = [X_\ell; \mathbf 1]$, maps to $s_\ell$.
 
 Let $\Vlo_\ell(v) = \lceil (v\,2^{30} - 2^{29})/m_\ell \rceil$, the smallest $z$ with
@@ -58,10 +59,11 @@ in the committed weights, V1 reduces to a range check on a linear image of $A_\e
 
 \subsection{A Windowed LogUp with Integer Multiplicities}
 
-We prove all range memberships at once with a logUp lookup argument~\cite{haboeck2022logup}
-over the field $\Fext = \F[\xi]/(\xi^8 - 11)$ of degree 8, the least for which the lookup's error
-stays below $2^{-\beta}$ under Fiat--Shamir (Table~\ref{tab:params}). Entry $(i,j)$ becomes the leaf $v_{ij} = \delta_{ij} + \xi\,W_{ij}$, and the table is
-$\Vtab = \{ t + \xi w : w \in \mathcal W, 0 \le t < w \}$, where $\mathcal W$ holds the width 1 and
+A logUp lookup argument~\cite{haboeck2022logup} proves at once that every \emph{leaf} lies in a
+public table. It runs over the field $\Fext =
+\F[\xi]/(\xi^8 - 11)$ of degree 8, the least for which the lookup's error stays below $2^{-\beta}$
+under Fiat--Shamir (Table~\ref{tab:params}). Entry $(i,j)$ becomes the leaf $v_{ij} = \delta_{ij} +
+\xi\,W_{ij}$, and the table is $\Vtab = \{ t + \xi w : w \in \mathcal W, 0 \le t < w \}$, where $\mathcal W$ holds the width 1 and
 the two widths of each cut operation. As $1$ and $\xi$ are linearly independent over $\F$, a leaf
 lies in $\Vtab$ exactly when $\delta_{ij} \bmod p \in [0, W_{ij})$, so one table serves every
 width. The prover sends a multiplicity $\mu_\tau$ for each $\tau \in \Vtab$, and the verifier checks
@@ -70,9 +72,9 @@ width. The prover sends a multiplicity $\mu_\tau$ for each $\tau \in \Vtab$, and
   \label{eq:v1-logup}
 \end{equation}
 at a random $\alpha$, the left sum running over the $\Nleaf = \sum_{\ell \in \Vcut} N_\ell T$
-leaves of the cut set $\Vcut$. The usual logUp lemma needs fewer leaves than the characteristic,
-but our proofs hold up to $\VOneLargeLeaves{}$ leaves, more than $p \approx 2.0 \cdot 10^9$, and $p$
-equal leaves cancel. We therefore check two integer conditions.
+leaves of the cut set $\Vcut$. The usual logUp lemma needs fewer leaves than $p$, but our proofs
+have up to $\VOneLargeLeaves{}$ leaves, more than $p \approx 2.0 \cdot 10^9$, and $p$ equal leaves
+cancel. The verifier therefore checks two integer conditions.
 
 \begin{lemma}[integer multiplicities]
   \label{lem:v1-logup}
@@ -81,18 +83,19 @@ equal leaves cancel. We therefore check two integer conditions.
   in $\Fext(X)$, then every $v_i$ lies in $\Vtab$.
 \end{lemma}
 
-\subsection{Reducing the Lookup to the Weight Commitment}
+\subsection{Reducing the Lookup to the Commitment}
 
-A fractional-sum GKR protocol~\cite{gkr,papini2023logupgkr} over instances of stacked rows by the
-$T$ positions, padded to powers of two, reduces the left side of~\eqref{eq:v1-logup} to a root
+The verifier cannot compute the leaves, which depend on the hidden claims. A fractional-sum GKR
+protocol~\cite{gkr,papini2023logupgkr} reduces the left side of~\eqref{eq:v1-logup} to a root
 $\mathsf n_0/\mathsf d_0$ and, by degree-3 sum-checks~\cite{lfkn1992}, to claims $\hat{\mathsf n},
 \hat{\mathsf d}$ on the leaf layer's multilinear extensions at a random point $\rho =
-(r_{\mathrm{col}}, r_{\mathrm{row}})$.
+(r_{\mathrm{col}}, r_{\mathrm{row}})$; each instance stacks rows of cut operations by the $T$
+positions, padded to powers of two.
 
 Let $e \in \Fext^{T}$ hold $\Veq(r_{\mathrm{col}}, j)$ for $j < T$, let $\chi_\ell \in
 \Fext^{N_\ell}$ hold $\Veq(r_{\mathrm{row}}, o_\ell + i)$ for the rows $i$ of operation $\ell$ at
-row offset $o_\ell$, and let $I(\rho)$, computable in time $O(n)$, be the multilinear extension of
-the indicator of the real positions. The true values are
+row offset $o_\ell$, and let $I(\rho)$ be the multilinear extension of the indicator of the real
+positions. The true values are
 \begin{equation}
   \begin{aligned}
     &\tilde{\mathsf n}(\rho) = I(\rho), \quad
@@ -124,9 +127,9 @@ $\Vclr$ and keep v0: the embeddings, the LM head, the single-position operations
 block, and any operation that fails a rule.
 
 \para{One query.} The prover sends the values $s_\ell$, the clear claims, the exceptions and the
-multiplicities before $\alpha \in \Fext \setminus (\F + \xi\F)$ is drawn (in mode $\sC$ with v0's
-vectors $\chi_\ell$ of the clear operations), then the GKR transcripts, then the folds of the cut and the clear
-operations; the columns are drawn last. The verifier checks~\eqref{eq:v1-logup} as
+multiplicities; the verifier draws $\alpha \in \Fext \setminus (\F + \xi\F)$ and, in mode $\sC$,
+v0's vectors $\chi_\ell$ for the clear operations; the prover sends the GKR transcripts, then the
+folds of the cut and the clear operations; the columns are drawn last. The verifier checks~\eqref{eq:v1-logup} as
 $\sum_\gamma \mathsf n_0^\gamma / \mathsf d_0^\gamma = \sum_\tau \mu_\tau / (\alpha - \tau)$ over
 the instances $\gamma$ (all checks: Appendix~\ref{app:v1}).
 

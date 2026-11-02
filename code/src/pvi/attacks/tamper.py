@@ -283,14 +283,14 @@ def plan_stealthy_flip(
     can lie far outside the range the neuron ever takes on natural inputs.  That is
     a signature: a verifier which also checked each opened activation against a
     published per-neuron envelope would catch it, even though no local relation is
-    violated at that node.  (The protocol specifies no such check -- but it is cheap,
-    and this attack is the reason to add one.)
+    violated at that node.  (The protocol specifies no such check, but it is cheap
+    to add.)
 
-    This planner removes the signature.  Neurons are ranked by influence and pushed
-    only as far as their own envelope allows -- up to ``ceilings`` when that helps
-    the runner-up class, down to zero when it does not -- and neurons are added
-    one at a time, in the order of that ranking, until the output becomes the
-    runner-up class.  The result is the shortest prefix of the ranking whose
+    This planner removes the signature, so such a check does not stop the attack.
+    Neurons are ranked by influence and pushed only as far as their own envelope
+    allows -- up to ``ceilings`` when that helps the runner-up class, down to zero
+    when it does not -- and neurons are added one at a time, in the order of that
+    ranking, until the output becomes the runner-up class.  The result is the shortest prefix of the ranking whose
     in-range changes suffice.
 
     The trade is support for plausibility: ``k`` neurons instead of one, so

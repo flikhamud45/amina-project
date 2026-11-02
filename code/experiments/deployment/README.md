@@ -98,7 +98,8 @@ experiments/deployment/ev_inputs.json`, `--out artifacts/results/ev_breakeven`, 
 
 The measured values are typed in by hand, each with the script and the record field it was read from; they were
 measured on an RTX 2080 Ti prover with 8 threads of an Intel Xeon Silver 4114 as the CPU client, in the paper's
-configuration. The final run's records replace them: each value is the field named below of the final run's line.
+configuration. To draw the figure from another run, replace each value with the field named below of that run's
+record.
 
 | Key | Value | Source (script, record field) |
 |---|---|---|
@@ -130,7 +131,7 @@ python -m experiments.deployment.serve_ab --model <model> --workload a b --modes
 
 on the platform's GPU; `paper/numbers.py` reads its `row: "prove"` lines (the serving table and the `Serve*` macros).
 The break-even needs no GPU: `python -m experiments.deployment.ev_breakeven --figure
-../paper_sp2027/figures/ev_breakeven.pdf` after updating `ev_inputs.json` from the final run's `cpuv` and `v1` records
+../paper_sp2027/figures/ev_breakeven.pdf` after updating `ev_inputs.json` from the run's `cpuv` and `v1` records
 (the fields of the table above).
 
 A small version runs on a laptop CPU in about a minute (no downloads, no GPU):

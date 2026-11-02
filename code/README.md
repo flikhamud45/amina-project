@@ -21,14 +21,15 @@ inference lets the client check each answer. This code
 | [`src/pvi/`](src/pvi/README.md) | the library: the field and graphs (`core`), commitments and plans (`commit`), protocol v0 (`v0`), V1 (`v1`), integer models (`models`), native and Triton kernels (`kernels`), the path protocol and samplers (`baseline`), the attacks (`attacks`, `mnist`), the implementation options (`options`) |
 | [`experiments/`](experiments/README.md) | one package per part of the paper; each README maps the paper's results to commands; `package/run.sh` is the run that produces them |
 | [`tests/`](tests/) | the test suite (exactness of every kernel against the reference semantics, protocol soundness checks, every tamper rejected at its check, the experiment harnesses) |
-| [`tools/`](tools/) | the generator of the Triton GKR prover (`gen_gkr_triton.py`) and the anonymous snapshot for review (`export_anonymous.py`) |
+| [`tools/`](tools/) | the generator of the Triton GKR prover (`gen_gkr_triton.py`) and the exporter of the anonymous snapshot for double-blind review (`export_anonymous.py`) |
 | [`artifacts/`](artifacts/README.md) | the stored MNIST networks (`models/`), the benchmark's records and tables (`comparison/`) and the stored results of the other experiments (`results/`); per file, the command that wrote it, the platform it was measured on and what reads it |
 
 ## Installation
 
-Python 3.11 or 3.12 (the results: 3.12), PyTorch 2.5.1: the pinned requirements need it (NumPy 2.5.2 needs Python
-3.11 or later, and PyTorch 2.5.1 ships wheels up to 3.12); the library alone, installed with `pip install -e code`
-and the ranges of `pyproject.toml`, also runs on 3.10. On a CUDA machine install the matching build first:
+Python 3.11 or 3.12 and PyTorch 2.5.1 (the paper's results: Python 3.12). The pinned requirements need Python 3.11
+or later (NumPy 2.5.2), and PyTorch 2.5.1 has wheels up to Python 3.12; the library alone, installed with
+`pip install -e code` and the version ranges of `pyproject.toml`, also runs on Python 3.10. On a CUDA machine, install
+the matching PyTorch build first:
 
 ```bash
 python3.12 -m venv .venv
@@ -39,27 +40,29 @@ python3.12 -m venv .venv
 
 Optional, for speed only (every path computes the same integers): a C++ compiler in `CXX` (g++ 9 or later) builds
 the native CPU kernels on first use, into `PVI_NATIVE_DIR` (default `~/.cache/pvi`); Triton (part of PyTorch's CUDA
-builds) runs the fused GPU kernels, and needs the Python headers (on hosts without them, `PVI_PY_INCLUDE` names a
+builds) runs the fused GPU kernels and needs the Python headers (on hosts without them, `PVI_PY_INCLUDE` names a
 folder holding a copy). Real checkpoints and WikiText-2 are downloaded from the Hugging Face hub into `HF_HOME`;
-the Llama-2 checkpoints need your own licence and login.
+the Llama-2 checkpoints require accepting their licence and logging in to the hub. The image models' datasets are
+read from `PVI_CIFAR_ROOT` and `PVI_IMAGENET_ROOT` (defaults under `code/data/`) and cached in `PVI_CACHE` (default
+`code/artifacts/cache/`).
 
 ## Tests
 
 ```bash
 cd code
-PYTHONPATH=src:. ../.venv/bin/python -m pytest -q                       # CPU; GPU tests skip without a GPU
-PVI_TEST_DEVICE=cuda PYTHONPATH=src:. ../.venv/bin/python -m pytest -q  # on a GPU machine: the GPU kernels too
+PYTHONPATH=src:. ../.venv/bin/python -m pytest -q     # the GPU tests run when CUDA is available, else skip
 ```
 
-The full suite takes about 80 minutes with 8 CPU threads and a GPU.
-`../.venv/bin/python tools/gen_gkr_triton.py --check` (from `code/`) confirms that the Triton GKR prover is its
-generator's output.
+`PVI_TEST_DEVICE` (default `cuda`) selects the device of the GPU exactness tests, e.g. `cuda:1`. The full suite takes
+about 80 minutes with 8 CPU threads and a GPU. `../.venv/bin/python tools/gen_gkr_triton.py --check` (from `code/`)
+confirms that the Triton GKR prover (`src/pvi/v1/gkr_triton.py`) is its generator's output.
 
 ## Reproducing the paper
 
 * **Every number, on one platform**: [`experiments/package/README.md`](experiments/package/README.md). One command
-  submits every job of the run (about three days on one NVIDIA L40S node with 8 CPU threads); a dry run lists the
-  jobs, and a rehearsal runs every script of every tier on small cells in about three hours on a smaller GPU.
+  submits every job of the run, on NVIDIA L40S nodes with 8 CPU threads (that README gives each tier's expected
+  hours); a dry run lists the jobs, and a rehearsal runs every script of every tier on small cells in about three
+  hours.
 * **From the records to the paper**: [`experiments/paper/README.md`](experiments/paper/README.md) turns the run's
   records into the table bodies and text macros of the paper's LaTeX source.
 * **One result at a time**: each folder of [`experiments/`](experiments/README.md) maps the paper's results to

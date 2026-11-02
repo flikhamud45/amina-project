@@ -194,7 +194,7 @@ LLM_ROWS = {64: ("gpt2", "qwen3-4b", "llama2-7b", "llama2-13b"),
 
 def tab_eval_llm(ctx: Ctx) -> Table:
     """``tab:eval-llm``: per model and prompt length, mode C's prover, CPU and GPU verifier and proof, and Kpre's CPU
-    verifier and proof, all of the final code (one column per metric)."""
+    verifier and proof (one column per metric)."""
     tb = Table("tab_eval_llm", "tab:eval-llm",
                f"{protocol(ctx)}; bench tables {ctx.bench.name}\n"
                "columns: Model & Params & C prove & C CPU verify & C GPU verify (streaming) & C proof & "
@@ -287,7 +287,8 @@ def tab_eval_v1(ctx: Ctx) -> Table:
     of each (median over the timed queries, each party's Fiat--Shamir hashing in its time)."""
     tb = Table("tab_eval_v1", "tab:eval-v1",
                f"{protocol(ctx, 'V1 under Fiat-Shamir, its optimised verifier; v1 tier (v1_bytes.py --full)')}\n"
-               "columns: Build (b/L) & mode & v0 MB & V1 MB & ratio & prover v0 / V1 (s) & verifier v0 / V1 (s)")
+               "columns: Build (b/L) & mode & v0 MB & V1 MB & ratio & prover v0 / V1 (s) & verifier v0 / V1 (s) "
+               "(times v0/V1 to two decimals below 10 s, one below 100 s)")
     last = None
     for seq, m in V1_ROWS:
         if seq != last:
@@ -300,7 +301,8 @@ def tab_eval_v1(ctx: Ctx) -> Table:
             build = f"{NAME[m]}, {d.get('layers', '?')}/{FULL_LAYERS[m]}" if r else f"{NAME[m]}, --"
             p0, v0 = v1_timed(r, "v0")
             p1, v1 = v1_timed(r, "v1", "optimised")
-            two = lambda a, c: f.DASH if a is None or c is None else f"{a:.2f} / {c:.2f}"   # noqa: E731
+            short = lambda v: f.fixed(v, 2 if v < 10 else 1 if v < 100 else 0)   # noqa: E731  (0.10, 13.1, 162)
+            two = lambda a, c: f.DASH if a is None or c is None else f"{short(a)}/{short(c)}"   # noqa: E731
             for col, val in (("v0 prover", p0), ("V1 prover", p1), ("v0 verifier", v0), ("V1 verifier", v1)):
                 tb.put(row, col, val, r)
             tb.rows.append(" & ".join([
@@ -642,6 +644,7 @@ CERTIFIED_CELL = "smooth-certified-a0.6-p11"
 
 
 def scalar_cell(gain) -> str:
+    """``ppl_opt.py``'s cell of the scalar-gain graph with norm gain ``gain`` and 11-bit probabilities."""
     return f"scalar-g{gain:g}-p11"
 
 
@@ -1101,8 +1104,8 @@ def block_fit(points: dict, n_layers: int, blocks=None) -> tuple[float, float] |
 def long_point(run: Run, seq: int, n_layers: int = 32, *, gpu: bool = False, blocks=None) -> dict:
     """The long prompts at one length: the verifier (Kpre) and the proof of Llama-2-7B's shapes on the builds of
     :data:`LONG_BLOCKS` (the long tier, the CPU verifier; ``gpu``: the gpuv tier's streaming GPU verifier on
-    :data:`LONG_GPU_BLOCKS`, label ``long-gpuv``), extrapolated to the full model by a least-squares line over the blocks (:func:`block_fit`;
-    ``blocks``: only those builds); the same for each re-execution variant on the same device (``variants``:
+    :data:`LONG_GPU_BLOCKS`, label ``long-gpuv``), extrapolated to the full model by a least-squares line over the
+    blocks (:func:`block_fit`; ``blocks``: only those builds); the same for each re-execution variant on the same device (``variants``:
     ``{variant: (seconds, record)}``; ``reexec``: the fastest exact one, ``(seconds, variant, record)``; on the GPU
     the integer pass, ``int``, and the floating-point one, ``float``, in fp16); ``cells``: the perf records by
     blocks, ``src`` the largest build's."""
@@ -1150,7 +1153,8 @@ def long_measured(run: Run, device: str, seq: int) -> dict:
 def long_errors(run: Run) -> dict:
     """``{(device, seq): {"verify", "reexec", "bytes": (measured, extrapolated, relative error) or None, "src"}}``
     at the points of :data:`LONG_CHECK`, and ``("cpu", seq, "two-three")``: the verifier's ``(measured,
-    extrapolated, relative error)`` when only the 2- and 3-block builds are fitted (the earlier extrapolation)."""
+    extrapolated, relative error)`` when only the 2- and 3-block builds are fitted (the fit without the 4-block
+    build)."""
     out: dict = {}
     for dev, seq in LONG_CHECK:
         p, m = long_point(run, seq, gpu=dev == "cuda"), long_measured(run, dev, seq)
@@ -1316,8 +1320,9 @@ def tab_eval_reexec(ctx: Ctx) -> Table:
     :data:`EXACT`, and llama.cpp with Q8_0 and bf16 weights, each its fastest configuration)."""
     run = ctx.run
     tb = Table("tab_eval_reexec", "tab:eval-reexec", f"{protocol(ctx)}; gpuv tier: reexec.py --device cuda (int, "
-               "float = fp16), full models measured; cpuv tier: perf.py Kpre, reexec.py and llamacpp.py (random "
-               "weights, the fastest of llama.cpp's attention kernels and micro-batches) on 8 threads")
+               "float = fp16), full models measured; cpuv tier: perf.py Kpre, reexec.py and llamacpp.py "
+               f"({weights_of(ctx, 'llama2-7b', 2048)}, the fastest of llama.cpp's attention kernels and "
+               "micro-batches) on 8 threads")
     tb.rows.append(r"\multicolumn{4}{@{}l}{\emph{GPU: integer forward pass / fp16 decoder}} \\")
     for m in REEXEC_GPU:
         cells = [NAME[m]]

@@ -1,7 +1,7 @@
 """Anchuri et al.'s own adversaries, reproduced.
 
 Anchuri et al. test their protocol against cheating strategies and report that all
-of them fail; this module reproduces these:
+of them fail; this module reproduces three of them:
 
 * **Gradient-descent reconstruction** (their Section 7.2) -- optimise activations so
   that a chosen wrong output is backed by a trace consistent with ``M``'s weights

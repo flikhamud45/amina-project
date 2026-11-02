@@ -6,9 +6,9 @@ first hardware thread of ``n`` cores of one NUMA node that has ``n`` cores among
 node where the job sees one GPU and the kernel reports its node (so that the prover's host-to-device copies stay on
 its socket), else the lowest-numbered such node.  On a two-socket EPYC 9334 in NPS4 (eight NUMA nodes of eight
 cores) that is one whole node.  Memory is not bound: what does not fit in the node's memory is allocated on the
-others.  Where no node has ``n`` such cores, or
-the host has no CPU affinity (not Linux), the job runs unpinned and its log says so; every record states the CPUs it
-ran on (``cpu_affinity_list`` and ``cpu_numa_nodes`` of :func:`experiments.common.records.environment`).
+others.  Where no node has ``n`` such cores, or the host has no CPU affinity (not Linux), the job runs unpinned and
+its log says so; every record states the CPUs it ran on (``cpu_affinity_list`` and ``cpu_numa_nodes`` of
+:func:`experiments.common.records.environment`).
 
 ``--away <pid>...`` keeps processes that the job started before it pinned itself (the GPU telemetry sampler,
 ``experiments/package/telemetry.py``, and its ``nvidia-smi``) off the chosen cores: each of them, every thread of it

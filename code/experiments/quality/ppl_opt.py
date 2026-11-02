@@ -24,7 +24,7 @@ certified models themselves (their digests are those of ``digest_check.py``).
 * Calibration (``--calibration train``, the certified recipe's): draw ``d`` is ``--calib-windows`` consecutive
   ``--seq``-token windows of the train split's first 4,000,000 characters from window ``d * --calib-windows`` on
   (``checkpoints.certified_calibration``); no evaluated token is seen.  ``--calibration test-end`` is the setting of
-  the first smoothing study (extended version): ``--windows`` windows from the start of the test split joined
+  the first recipe's 128-token study (extended version): ``--windows`` windows from the start of the test split joined
   without a separator and one ``--seq``-token calibration window at its end, disjoint from them
   (``checkpoints.load_windows``; ``--draws`` does not apply).
 * Graphs (``--graphs``), each at every ``--pbits`` (8: probabilities 0..255; 11: 0..2047, the certified models'):
@@ -37,7 +37,8 @@ certified models themselves (their digests are those of ``digest_check.py``).
   ``--cle-mlp`` adds cross-layer equalisation between fc1 and fc2 to the smoothed graphs.  ``--scalar-opts`` and
   ``--smooth-opts`` (JSON) override keyword arguments of ``build_opt_from_hf``.
 * Probability mass: on the first ``--mass-windows`` windows, ``hf_opt.probability_mass`` records per block the mean
-  share of the probability mass a rounded row keeps (``sec:quality``: as little as 56% at 8 bits, 97.5% at 11).
+  share of the probability mass a rounded row keeps (``sec:quality``'s ``\\QualityMassMinEight`` and
+  ``\\QualityMassMinEleven``).
 * Lean: the integer forward frees each tensor after its last reader and keeps no claim; the LM head's logits are
   reduced to NLL and argmax in chunks.  The calibration runs on the CPU, the integer forward on ``--device``, the
   fp32 reference on ``--ref-device``.
@@ -180,6 +181,7 @@ def _gb(v):
 
 
 def run(model, tok, args) -> None:
+    """The fp32 reference, then every cell of ``args`` for every calibration draw (module docstring)."""
     wins, calibs, dataset = load_data(tok, args)
     counts = [w.shape[1] - 1 for w in wins]
     ref = reference(model, wins, args.ref_device or args.device, Path(args.ref_cache) if args.ref_cache else None)

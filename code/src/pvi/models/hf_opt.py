@@ -233,12 +233,12 @@ CERTIFIED_RECIPE = dict(norm_gain=4, smooth=0.6, smooth_pct=100.0, pct=100.0, pc
 """The certified OPT models' recipe (Sec. ``sec:quality``): SmoothQuant with alpha 0.6 through the norm gains, each
 channel's maximum as its statistic and no clipping ("smooth-max"), norm gain 4, and ``prob_max`` =
 :data:`CERTIFIED_PROB_MAX` (the default).  Calibration: the first four 2,048-token windows of the WikiText-2 (raw)
-*train* split (``experiments.common.checkpoints.certified_calibration``).  WikiText-2 test perplexity at 2,048
-tokens, measured: x1.076 (OPT-125M), x1.026 (OPT-1.3B), x1.008 (OPT-6.7B) of fp32 (``tab:quality``)."""
+*train* split (``experiments.common.checkpoints.certified_calibration``).  Its WikiText-2 test perplexity at 2,048
+tokens, relative to fp32, is Table ``tab:quality``."""
 LEGACY_RECIPE = dict(norm_gain=4, smooth=0.55, smooth_pct=99.9, pct=99.99, pct_att=99.99)
-"""The percentile recipe of the first smoothing study (the extended version's quality section): SmoothQuant with
-alpha 0.55 through the norm gains with the 99.9th-percentile channel statistic, 99.99th-percentile clipping of the
-weights and of the attention inputs, norm gain 4."""
+"""The percentile recipe, an alternative to :data:`CERTIFIED_RECIPE` (``experiments.common.checkpoints``'s
+``legacy`` recipe): SmoothQuant with alpha 0.55 through the norm gains with the 99.9th-percentile channel statistic,
+99.99th-percentile clipping at the requantisations of q, k, v and fc1 and at the attention output, norm gain 4."""
 
 
 def build_opt_from_hf(model, calib_ids: torch.Tensor, *, pct: float = 100.0, norm_gain: float = 32,

@@ -14,12 +14,12 @@ The challenges carry the names of their transcript labels: ``mu_k`` combines the
 (the paper's ``theta_k``), ``lam_k`` combines the numerator and denominator claims (the paper's ``eta_k``), and
 ``r_{k,j}`` is the challenge of round ``j``.  A round sends ``g(0), g(2), g(3)`` of its cubic, and
 ``g(1) = c - g(0)``.  Every message is absorbed before the next challenge is drawn (a
-:class:`pvi.v0.transcript.Challenger`, interactive or under Fiat-Shamir).  :func:`prove` and :func:`verify` work on
+:class:`pvi.v0.transcript.Challenger`, interactive or under Fiat--Shamir).  :func:`prove` and :func:`verify` work on
 dense torch tensors; the Triton prover (:mod:`pvi.v1.gkr_triton`) produces the same transcripts byte for byte.
 
 **Soundness** (the fractional-sum GKR lemma of the V1 appendix): a wrong root survives layer ``k`` with probability
 at most ``3k / p^8`` over its ``k`` rounds of degree 3, plus ``1 / p^8`` for each of ``lam_k`` and ``mu_k``, and the
-two children of the root add ``1 / p^8`` for ``mu_0``: ``eps(n) <= (1 + sum_{k<n} (3k + 2)) / p^8``.
+two children of the root add ``1 / p^8`` for ``mu_0``: ``eps(n) <= (1 + sum_{k=1}^{n-1} (3k + 2)) / p^8``.
 """
 
 from __future__ import annotations

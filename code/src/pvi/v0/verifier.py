@@ -142,7 +142,7 @@ def _defer(device) -> bool:
     """Whether the checks on ``device`` keep their work there: derive leaves the range checks of
     claims for the one copy, the field checks of ``u`` stay on the device, and the column code
     checks run on opened columns uploaded as the int32 rows the leaves hash.  Everywhere but on
-    the CPU (the tests run these forms on the CPU too)."""
+    the CPU (the tests also run these forms on the CPU, by patching this function)."""
     return torch.device(device).type != "cpu"
 
 
@@ -1116,6 +1116,7 @@ def _input_bindings(graph: IntGraph) -> dict[str, tuple[str, int]]:
 
 
 def sync_device(device) -> None:
+    """Waits for the work queued on ``device`` (nothing to wait for on the CPU), so timings cover it."""
     device = torch.device(device)
     if device.type == "cuda":
         torch.cuda.synchronize(device)   # the verifier's GPU, not necessarily the current one

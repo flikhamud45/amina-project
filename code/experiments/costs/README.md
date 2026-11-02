@@ -12,7 +12,7 @@ scripts compute byte models from the public shapes or train the image models.
 | `tab:eval-llm` (prove, CPU and GPU verify, proof; modes C and Kpre), `tab:eval-compare` ("ours") | `bench.py` | `python -m experiments.costs.bench llm --model llama2-7b --seq 64 --builds full --modes C:fs --lams 128 --queries 5 --llm-tampers 30 --platform <name>` (and the other jobs of the run package's `bench` tier: `bash code/experiments/package/run.sh --platform <name> --dry-run bench`) | `artifacts/comparison/raw_<name>/`, tables by `comparison/aggregate.py` |
 | Sec. `sec:eval-setup`: "accepted all 3,792 honest queries and rejected all 2,512 attacks", with the check that rejected each | `bench.py` (defence and tamper cells) | as above; then `python -m experiments.comparison.count_outcomes --platform <name>` | `raw_<name>/`, counts |
 | Sec. `sec:break`: one penultimate neuron flips every test query of each image model; the path test detects it with probability 1/84 to 1/512; `app:eval-attack`: 305,193 paths for `1 - 2^-40` | `bench.py cnn` (cells `attack_float`, `sampling`) | `python -m experiments.costs.bench cnn --model resnet18_224 --tampers 60 --platform <name>` | `raw_<name>/cnn/<model>/{attack_float,sampling}*.jsonl` |
-| `tab:gen` (the stored generated-response cells) | `bench.py --gen` | `python -m experiments.costs.bench llm --model gpt2 --seq 64 --gen 256 --builds full --modes C:int --platform <name>` | `raw_<name>/llm/gpt2/*_gen256*` (the final run uses `generation/gen_bench.py`) |
+| generated-response cells on this harness (the numbers of `tab:gen` come from `generation/gen_bench.py`) | `bench.py --gen` | `python -m experiments.costs.bench llm --model gpt2 --seq 64 --gen 256 --builds full --modes C:int --platform <name>` | `raw_<name>/llm/gpt2/*_gen256*` |
 | `tab:options` (CPU verifier against re-execution), `tab:eval-reexec`'s verifier row, `tab:memory` (the client's own peak memory) | `perf.py` (tier `cpuv`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes Kpre C --queries 5 --verifier-device cpu --label cpuv --client-memory` | stdout, one JSON line per mode |
 | `tab:eval-cpu` (the CPU verifier on 2 and 4 threads, without the AVX-512 attention kernel, Llama-2-13B; against exact re-execution on the same threads), `\CpuRatioThrTwo` and the other macros of `ext_evaluation.tex`'s `app:eval-cpu`; `tab:eval-reexec`'s verifier at 512 tokens (tier `cpuv`) | `perf.py` (tier `cpux`) | `python -m experiments.costs.perf --threads 4 --model llama2-7b --seq 2048 --modes Kpre --queries 5 --verifier-device cpu --label cpux` (on 4 pinned cores; 2 threads likewise); `... --threads 8 --no-native-avx512 --label cpux-noavx512`; `... --model llama2-13b --label cpux` | stdout |
 | `tab:eval-plans` (mode C's six candidate plans on the same queries), `\PlanCols*`, `\PlanCommit*` | `perf.py` (tier `cpux`) | `python -m experiments.costs.perf --model llama2-7b --seq 2048 --modes C --policy cnn18c tightc cnn16c cnn17c R16c R64c --queries 3 --verifier-device cpu --label plans` (no `--setup-cache`: `commit_s` is the encoding) | stdout, one JSON line per plan |
@@ -68,8 +68,8 @@ checkpoint's (the run package passes `--real` wherever its rule gives a cell a c
   scale is not the stored cells' 255: `_pmax2047` by default), `_gen<G>`, `_pol<name>` (commitment and mode-C cells
   under a plan other than `per-op`), `_real` (decoder cells of a checkpoint's weights, `--real`). A cell measured under the same settings therefore has the same name as the
   stored one: checked against every stored cell of `artifacts/comparison/raw_*`. The names depend on the effective settings,
-  not on which flags were given. The defaults are the paper's configuration, with 8 verifier threads, the batched
-  verifier on the CPU, TF32 off, and the batch sizes 8 and 32 (image models) and none (decoders). A stored `_polauto` cell (the planning rule, which picks `cnn16c`, `cnn17c` or
+  not on which flags were given. The defaults are the paper's configuration, with 8 verifier threads, the default
+  (non-streaming) verifier on the CPU, TF32 off, and the batch sizes 8 and 32 (image models) and none (decoders). A stored `_polauto` cell (the planning rule, which picks `cnn16c`, `cnn17c` or
   `cnn18c` per model) is distinct from a `_polcnn18c` cell (the paper's fixed plan).
 * **Records.** One JSON object per line in `raw_<name>/<suite>/<model>/<cell>.jsonl`: a first row `metric: env` (the
   run's environment: commit, host, CPU, GPU, versions, the implementation options under `implementation`), then rows
@@ -188,8 +188,8 @@ as text lines. Seconds on a laptop.
 The compact encoding of the proof against the uncoded one: bits per claim (the "16–19 bits" of `ext_v1.tex`), proof
 bytes per part with and without the encoding, verifier and prover times, and the codec's throughput, on image models
 (random weights, MNIST digits from `--mnist`, read without downloading; `mlp_mnist`: the trained MLP) and decoders
-(`decoder:tokens[:blocks]`). Mode C is sized under the per-op commitment (the plan does not change the encoding's
-effect), Kpre at `--lam`, Qwen3-4B at 40 (`--kpre-lam`, Maverick's setting). The results go to `--out` (default
+(`decoder:tokens[:blocks]`). Mode C runs under the per-op commitment on the image models (the plan does not change
+the encoding's effect) and is sized by the byte model on the decoders, Kpre at `--lam`, Qwen3-4B at 40 (`--kpre-lam`, Maverick's setting). The results go to `--out` (default
 `artifacts/results/development/wire.json`); the stored measurement is `artifacts/results/development/wire_laptop.json`
 (`--summary` prints its tables). On a laptop CPU the stored specs took from 1 s (the MLP) to 191 s (GPT-2 at 512
 tokens).
@@ -203,7 +203,7 @@ only. Minutes for LeNet-5, a few hours for the 224-pixel ResNets on one GPU.
 
 ## Reproducing the paper's numbers
 
-The final numbers come from one platform, through the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`; its
+The paper's numbers come from one platform, through the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`; its
 README is `experiments/package/README.md`):
 
 * `bench`: the `bench.py` jobs of `tab:eval-llm`, `tab:eval-compare`, `tab:eval-lambda` and the outcome counts (each

@@ -116,7 +116,7 @@ def _num(x: str) -> float | None:
 
 
 def _time(x: str) -> float | None:
-    """``nvidia-smi``'s timestamp (``2026/10/27 12:00:01.123``) as seconds since the epoch (local time)."""
+    """``nvidia-smi``'s timestamp (``2025/01/31 12:00:01.123``) as seconds since the epoch (local time)."""
     for fmt in ("%Y/%m/%d %H:%M:%S.%f", "%Y/%m/%d %H:%M:%S"):
         try:
             import datetime

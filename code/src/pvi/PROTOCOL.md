@@ -3,10 +3,9 @@
 This file describes protocol v0 (Sec. `sec:protocol`, `sec:fs`) and its variant V1 (Sec. `sec:v1`) as the library
 implements them: the parties, the messages in their order, the bytes on the wire, and the parameters. It is a
 reference for checking the implementation against the paper. Every statement names the function that implements
-it. Integers in byte layouts are
-little-endian unless stated otherwise; `p = 15 * 2**27 + 1 = 2013265921` is the BabyBear prime
-(`pvi.core.field.P`), and `F_{p^8} = F_p[x] / (x^8 - 11)` is the extension field of V1 (`pvi.core.extfield`,
-`pvi.core.extfield.D` = 8, `pvi.core.extfield.BETA` = 11). Both parties run in one process; what one party hands the
+it. Integers in byte layouts are little-endian unless stated otherwise; `p = 15 * 2**27 + 1 = 2013265921` is the
+BabyBear prime (`pvi.core.field.P`), and `F_{p^8} = F_p[x] / (x^8 - 11)` is the extension field of V1
+(`pvi.core.extfield`, `pvi.core.extfield.D` = 8, `pvi.core.extfield.BETA` = 11). Both parties run in one process; what one party hands the
 other is a copy (`pvi.v0.query.passed`), or, with the compact encoding, bytes that the other party decodes.
 
 ## 1. The statement
@@ -126,8 +125,8 @@ In mode K steps 3 to 5 are replaced by the verifier's own fold (`pvi.v0.verifier
 interactively.
 
 **Fiat-Shamir.** The transcript is a SHAKE-256 sponge initialised with the 16 bytes `pvi/fullcheck/v3`
-(`pvi.v0.transcript.Challenger`), a fixed domain separator kept from an earlier module name (changing it would
-change every Fiat-Shamir transcript). A direct absorption (`pvi.v0.transcript.Challenger.absorb`) appends
+(`pvi.v0.transcript.Challenger`), a fixed domain separator (changing it would change every Fiat-Shamir
+transcript). A direct absorption (`pvi.v0.transcript.Challenger.absorb`) appends
 `len(label)` (2 bytes big-endian) `|| label || len(message)` (8 bytes big-endian) `|| message`. A large absorption
 (`pvi.v0.transcript.Challenger.absorb_large`) is direct below `2**24` bytes; from `2**24` bytes the message is cut
 into chunks of `2**22` bytes, leaf `j = SHAKE-256("pvi/leaf/v1" || len(label) (2 bytes) || label || j (8 bytes
@@ -192,9 +191,9 @@ The verifier, in this order:
 3. derives every weight op's input (`pvi.v0.verifier.Verifier.derive`, `pvi.v0.verifier.Verifier._derive`): it runs
    the ops in order, recomputing every cheap op from `x` and the claims (recomputation, (S1)); for each weight op it
    requires a claim of shape `[N, M]`, the range check `1 - 2**29 <= z <= 2**29 - 1`
-   (`pvi.v0.params.Z_BOUND`), for a lookup table's claim `-128 <= z <= 127`, and for every embedding op (a lookup table,
-   the verifier's own rows, or one checked with Freivalds) ids in `[0, V)`; then `pvi.core.graph.MatOp.fold` turns the claim into the op's output tensor. Any failure is
-   `range_or_shape`;
+   (`pvi.v0.params.Z_BOUND`), for a lookup table's claim `-128 <= z <= 127`, and for every embedding op (a lookup
+   table, the verifier's own rows, or one checked with Freivalds) ids in `[0, V)`; then `pvi.core.graph.MatOp.fold`
+   turns the claim into the op's output tensor. Any failure is `range_or_shape`;
 4. checks every lookup table (`pvi.v0.verifier.Verifier.check_lookups`): equal ids carry equal columns
    (`lookup_consistency`), and the rows of the distinct ids with the table's multiproof give its root
    (`lookup_merkle`; a proof longer than `ids x depth` hashes is refused).
@@ -237,7 +236,7 @@ adds the labels of section 5.4. With wire, a malformed claims frame is `range_or
 A verifier with `stream=True` (`pvi.v0.verifier.Verifier.verify_streaming`, for a GPU client) receives every
 message first, then runs the same checks in a reordered schedule (each weight op checked as soon as its claim is on
 the device, `pvi.v0.streaming.ClaimUploads`) with the same verdicts and labels; a rejected streaming query has also
-received, counted and absorbed the messages that `run_query` no longer asks for.
+received, counted and absorbed the messages after the failing check, which `run_query` does not ask for.
 
 ## 3. The wire format and the byte counts
 

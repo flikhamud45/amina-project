@@ -136,7 +136,7 @@ def test_prediction_tracks_the_path_budget(mlp_net, query_for, protocol_pair, n_
 
 
 # --------------------------------------------------------------------------- #
-# Structural facts the attack analysis will use
+# Structural facts the attack analysis uses
 # --------------------------------------------------------------------------- #
 
 

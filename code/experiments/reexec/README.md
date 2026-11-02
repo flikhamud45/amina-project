@@ -125,14 +125,15 @@ and `same_model` false), `paper/numbers.py` fails any that does not, and it neve
   use each weight type's fastest configuration. llama-bench's own output is read by the script, never copied to the
   job's log.
 * **Records.** One JSON line per weight type, `T` and configuration (`"kind": "llamacpp"`): `variant`
-  (`llamacpp_q8_0`, `llamacpp_bf16`), `dtype`, `exact` and `same_model` (false), `weights` (`random`), `seed`,
+  (`llamacpp_q8_0`, `llamacpp_bf16`), `dtype`, `exact` and `same_model` (false), `weights` (`random` or `real`), `seed`,
   `model`, `seq`, `threads`, `reps`, `layers` (blocks built), `n_layers` (the model's), `measured_s` (the median,
   keyed by the blocks built, so that a one-block build never fills a full-model cell), `range_s`, `samples_s`,
   `full_s`, `flash_attn`, `n_batch`, `n_ubatch`, `gguf_bytes`, `gguf_params`, `peak`, `env`, and `llamacpp` (the
   release, commit, build number, CMake flags, compilers, system information, llama-bench's command line and its own
   fields). A failed step prints `FAILED: llama.cpp <step>: ...` and the exit status is 1.
 * **Requirements and time.** CMake 3.14 or later, git, a C and C++ compiler and, for the clone, network access to
-  GitHub (or a clone made beforehand in `--llamacpp-dir`'s `src/`). The first build takes about 5 to 10 minutes; the
+  GitHub (or a clone made beforehand in `--llamacpp-dir`'s `src/`, e.g. by `--clone-only`, which `run.sh` runs on
+  the submitting host). The first build takes about 5 to 10 minutes; the
   full cell (Q8_0 and bf16 at 64 and 2,048 tokens, four configurations each) about one to one and a half hours on 8
   Zen 4 cores, with up to about 16 GB of memory (the package: 3 h, 64 GB).
 
@@ -146,10 +147,10 @@ Needs a GPU (exit status 2 without one); seconds.
 
 ## Reproducing the paper's numbers
 
-The final numbers come from the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`, `experiments/package/README.md`): its `cpuv` tier runs
+The paper's numbers come from the run package (`bash code/experiments/package/run.sh --platform <name> <tier>`, `experiments/package/README.md`): its `cpuv` tier runs
 `reexec.py --device cpu` with every variant on Llama-2-7B, Qwen3-4B and OPT-1.3B at 64 and 2,048 tokens (Llama-2-7B
 also at 512; 2 blocks and the full model; Llama-2-7B also with the allocator settings the CPU verifier applies to
-itself) and `llamacpp.py` on Llama-2-7B's shapes (Q8_0 and bf16, 64, 512 and 2,048 tokens; the rehearsal: one block at
+itself) and `llamacpp.py` on Llama-2-7B's shapes (Q8_0 and bf16, 64, 512 and 2,048 tokens; `run.sh --rehearsal`: one block at
 64 tokens), its `cpux` tier the exact variants of Llama-2-7B at 2,048 tokens on 2 and 4 threads (as many pinned cores)
 and without the AVX-512 attention kernel, and of Llama-2-13B, its `gpuv` tier
 `reexec.py --device cuda` (`int float bf16`) on the five table models at 64, 512 and 2,048 tokens and

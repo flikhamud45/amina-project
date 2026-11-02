@@ -1,7 +1,7 @@
 """The hardware-independent values of two raw benchmark roots agree: proof sizes do not depend on the hardware.
 
 Backs the extended version's "Proof sizes do not depend on the hardware" (``app:eval-setup``): every value below is
-an integer fact about the model, the graph or the protocol, so it must be identical on any GPU and CPU.  On the stored
+a fact about the model, the graph or the protocol, so it must be identical on any GPU and CPU.  On the stored
 roots, the second platform (an RTX 2080 Ti prover with a Xeon Silver 4114 verifier) reproduces all 1,978 such values
 of the L40S run:
 
@@ -13,15 +13,15 @@ of the L40S run:
 The values compared (:data:`EXACT`): the parameter count, the int8 model's bytes and accuracy, the path test's facts
 (the bytes to open everything, the detection probabilities, the paths needed and their bytes), the security bits, the
 bytes of the claims, of ``u`` and of the opened columns (the Merkle term depends on the random columns), every
-verdict, and in roots that record them (from the final run's commit on) every Fiat--Shamir query's transcript digest
-(``proof_transcript``: the proof's bytes) and the commitment's roots (``commit_roots_sha256``); and, within ``--accuracy-tolerance``, the float model's accuracy (cuDNN may change its last digits).  A
-mismatch means different weights, data, code or a GPU/CPU disagreement.  It also prints every honest rejection and
-every accepted attack of the second root.  Exits 1 on any problem, and also when nothing could be compared (a wrong
+verdict, and in roots that record them (the final run's) every Fiat--Shamir query's transcript digest
+(``proof_transcript``: the proof's bytes) and the commitment's roots (``commit_roots_sha256``); and, within
+``--accuracy-tolerance``, the float model's accuracy (cuDNN may change its last digits).  A mismatch means different
+weights, data, code or a GPU/CPU disagreement.  It also prints every honest rejection and every accepted attack of
+the second root.  Exits 1 on any problem, and also when nothing could be compared (a wrong
 or partial stored root).  Cells are compared by name, so a decoder cell of another attention probabilities' scale (the
 final run's ``_pmax2047``, 11 bits) has no counterpart in the stored roots' 8-bit cells; the final run's own cells
 are compared with a second platform's run of the same cells (``proof_digests.py`` compares the run's fixed cells
-proved on its GPU and CPU and on another platform).  Reads only; a minute on a
-laptop CPU for the stored roots.
+proved on its GPU and CPU and on another platform).  Reads only; a minute on a laptop CPU for the stored roots.
 """
 from __future__ import annotations
 

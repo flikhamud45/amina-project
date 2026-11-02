@@ -198,7 +198,7 @@ def test_group_openings_match_cpu():
 
 
 def test_the_worst_case_pattern_would_catch_a_wrong_chunk_bound(monkeypatch):
-    # guards the test above: with 4,096-term chunks (partial sums up to 66 M) float32 rounds
+    # guards the tests above (the "max" pattern): with 4,096-term chunks (partial sums up to 66 M) float32 rounds
     import pvi.core.graph as graph
 
     w, x = _operands(256, 4096, 64, "max")

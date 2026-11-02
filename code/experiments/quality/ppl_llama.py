@@ -1,11 +1,11 @@
 """Perplexity of the integer Llama-family models (Llama, Qwen3) on WikiText-2 (raw): the Llama-family ratios of
-Sec. ``sec:quality`` and of the extended version's discussion (with the main recipe at 2,048 tokens TinyLlama x1.12,
-Qwen3-1.7B x1.40 and Qwen3-4B x5.3; with the per-token exponent, a possible improvement, Qwen3-1.7B x1.20 and
-Qwen3-4B x3.0), the ratios of Llama-2-7B and Llama-2-13B (the run package's quality tier, with ``--llama-licence``),
-their committed alphas (and Llama-2-7B's product balance) among their neighbours on the test and the validation split,
-and the check that Llama-2-7B's integer graph has exactly the structure of the benchmark graph whose costs the paper
-reports.  OpenLLaMA-7B (``openlm-research/open_llama_7b_v2``), a licence-free model of Llama-2-7B's shapes, takes
-Llama-2-7B's place in a run without the Llama-2 licence (x1.073 with the same recipe); the paper does not report it.
+Sec. ``sec:quality`` and of the extended version's discussion (TinyLlama, Qwen3-1.7B and Qwen3-4B with the main recipe
+at 2,048 tokens, and Qwen3-1.7B and Qwen3-4B with the per-token exponent, a possible improvement), the ratios of
+Llama-2-7B and Llama-2-13B (the run package's ``qllama`` tier, with ``--llama-licence``), their committed alphas (and
+Llama-2-7B's product balance) among their neighbours on the test and the validation split, and the check that
+Llama-2-7B's integer graph has exactly the structure of the benchmark graph whose costs the paper reports.
+OpenLLaMA-7B (``openlm-research/open_llama_7b_v2``), a licence-free model of Llama-2-7B's shapes, takes Llama-2-7B's
+place in a run without the Llama-2 licence; the paper does not report it.
 
     python -m experiments.quality.ppl_llama --model meta-llama/Llama-2-7b-hf --alphas 0.45 0.55 0.65 \\
         --glu-smooths 0.1 0.2 0.3 --structure --device cuda --out llama2-7b.jsonl       # add --split validation
@@ -48,11 +48,12 @@ Llama-2-7B's place in a run without the Llama-2 licence (x1.073 with the same re
   q/k norms, ``--pct-att`` at the attention output and ``--pct-glu`` (default ``--pct``) at the SwiGLU product, the
   SwiGLU product's balance ``--glu-smooths``, the prefix, and for Qwen3 the q/k-norm balance per RoPE pair and the
   head equalisation in front of the q/k norms; alpha and the product balance default to the checkpoint's
-  (:data:`pvi.models.hf_llama.MAIN_SETTINGS`).  ``smooth``: the same without the product balance.  ``scalar``: one norm gain per
-  ``--gains``, no clipping.  ``--glu-exps E ...`` adds to every smoothed cell its variant with the per-token exponent
-  ``0 .. E`` at the SwiGLU product (``glu_exp``; ``--pct-glu`` then picks the token maximum that takes exponent E): a
-  possible improvement, not the main algorithm, since it changes two ops per block and V1's cut; ``--exp-only``
-  keeps only those variants (a run whose cells without the exponent an earlier run of the same settings measured).
+  (:data:`pvi.models.hf_llama.MAIN_SETTINGS`).  ``smooth``: the same without the product balance.  ``scalar``: one
+  norm gain per ``--gains``, no clipping.  ``--glu-exps E ...`` adds to every smoothed cell its variant with the
+  per-token exponent ``0 .. E`` at the SwiGLU product (``glu_exp``; ``--pct-glu`` then picks the token maximum that
+  takes exponent E): a possible improvement, not the main algorithm, since it changes two ops per block and V1's
+  cut; ``--exp-only`` keeps only those variants (for a run whose cells without the exponent another run of the same
+  settings measured).
   ``--no-qk-balance``: Qwen3's graphs without the q/k-norm balance.  Every graph keeps the benchmark graph's ops and
   shapes (but ``glu_exp``'s two ops per block): only constants change.
 * Reference: the checkpoint in fp32 on ``--ref-device`` (``--ref-dtype`` float16 / bfloat16: a second copy loaded in
@@ -86,8 +87,8 @@ Output: one JSON line per cell on stdout (and appended to ``--out``): first the 
 ``digest``, ``weights_sha256``, ``report``, ``build_s``, ``seconds``, the peak memory (``peaks``, ``peak_rss_GB``,
 ``peak_gpu_GB``), with a prefix its keys' and values' reach (``prefix_clip``, ``prefix_hidden_max``), with
 ``--structure`` ``structure_against`` and ``structure_diff``; every line carries the run's head (model, shape,
-``split``, windows, tokens, calibration, prefix and its choice, ``env``: ``records.environment``).  A short summary per
-cell goes to stderr.
+``split``, windows, tokens, calibration, prefix and its choice, ``host``, ``gpu``, ``env``: ``records.environment``).
+A short summary per cell goes to stderr.
 
 Hardware and time (2,048 tokens, every test window; the integer forward on an RTX 2080 Ti, the calibration on the
 CPU of a Xeon node with 250 GB): a 7B cell (OpenLLaMA-7B) takes about 47 min, mostly the calibration build on the

@@ -2,7 +2,8 @@
 
 :mod:`pvi.attacks.tamper` shows that one activation can be overwritten at a cost of
 ``1/N`` detection probability per path.  On its own that is an attack on soundness.
-Turning it into a *backdoor* costs nothing extra and removes even that ``1/N``:
+Turning it into a *backdoor* costs nothing extra and removes even that ``1/N`` on
+every clean query:
 
 * On inputs without the trigger, the adversary serves the honest trace.  It is not
   merely close to ``M``'s -- it *is* ``EvalTrace(M, qry)``, bit for bit.  Clean
@@ -175,9 +176,9 @@ class BackdoorAdversary:
         plan = self._plan(honest, self._candidate_neurons)
         if plan is None:
             # The saliency ranking is first order at the honest trace: a neuron that reaches
-            # the target only under a large overwrite (which switches other layer-2 units on)
-            # can rank below the cut.  Only then try every neuron of the layer, so plans the
-            # top-k search finds are unchanged.
+            # the target only under a large overwrite (which switches on other units of the
+            # layers above) can rank below the cut.  Every neuron of the layer is searched
+            # only when the top-k search fails, so it never replaces a plan the top-k finds.
             plan = self._plan(honest, self._network.architecture[self._layer_index].n_neurons)
         if plan is None:
             return ServedResponse(

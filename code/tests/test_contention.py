@@ -116,7 +116,7 @@ def test_real_schedstat_sees_this_process_run():
 # ---------------------------------------------------------------- run_query
 def _queries():
     """(name, prover factory, verifier, query) of every run_query path: mode C under a c policy (lookup
-    tables), interactive and Fiat-Shamir, batched and streaming; K and Kpre, with the verifier's own rows."""
+    tables), interactive and Fiat--Shamir, batched and streaming; K and Kpre, with the verifier's own rows."""
     from test_plans import _planned, _verifiers
 
     graph, x, coms = _planned("gpt", "R8c")

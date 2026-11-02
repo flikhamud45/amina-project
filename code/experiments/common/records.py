@@ -130,14 +130,13 @@ def _versions() -> dict:
 
 
 def environment(device=None) -> dict:
-    """The run's environment for a record: the commit (and whether the checkout has uncommitted changes), the
-    host, CPU and threads, the CPUs the process may run on (their number ``cpu_affinity``, their list
-    ``cpu_affinity_list`` and their NUMA nodes ``cpu_numa_nodes``; ``run.sh`` pins its CPU-timing jobs,
-    :mod:`experiments.package.pin`),
-    the GPU and its driver, the Python, torch and CUDA versions and those of :data:`LIBRARIES` (``versions``), the
-    variables of :data:`VARIABLES` that are set (``env_vars``), the revision of every checkpoint and dataset file
-    loaded so far (``sources``, :data:`experiments.common.checkpoints.SOURCES`), the scheduler's job and the
-    implementation options with what this host runs (:func:`pvi.options.describe`)."""
+    """The run's environment for a record: the commit (and whether the checkout has uncommitted changes), the host, CPU
+    and threads, the CPUs the process may run on (their number ``cpu_affinity``, their list ``cpu_affinity_list`` and
+    their NUMA nodes ``cpu_numa_nodes``; ``run.sh`` pins its CPU-timing jobs, :mod:`experiments.package.pin`), the GPU
+    and its driver, the Python, torch and CUDA versions and those of :data:`LIBRARIES` (``versions``), the variables of
+    :data:`VARIABLES` that are set (``env_vars``), the revision of every checkpoint and dataset file loaded so far
+    (``sources``, :data:`experiments.common.checkpoints.SOURCES`), the scheduler's job and the implementation options
+    with what this host runs (:func:`pvi.options.describe`)."""
     from experiments.common.paths import CODE
     from experiments.package import pin
     import pvi

@@ -1109,8 +1109,8 @@ def rope(x: torch.Tensor, cos2: torch.Tensor, sin2: torch.Tensor):
 
 
 def field_matmul(chi: torch.Tensor, z: torch.Tensor):
-    """``chi @ z mod P`` (int64 ``[r, m]``, canonical) for ``chi [r, n]`` in the field and an int64 matrix ``z
-    [n, m]`` (contiguous rows or contiguous columns) with ``|z| < 2**31``, exactly; None when the operands are
+    """``chi @ z mod P`` (int64 ``[r, m]``, canonical) for ``chi [r, n]`` in the field and an int32 or int64 matrix
+    ``z [n, m]`` (contiguous rows or contiguous columns) with ``|z| < 2**31``, exactly; None when the operands are
     not of that kind or out of range (the caller's products then apply)."""
     if not (cheap_enabled(chi, claim=z) and chi.dim() == 2 and z.dim() == 2 and chi.shape[1] == z.shape[0]):
         return None

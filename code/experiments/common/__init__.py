@@ -12,6 +12,15 @@
 ``checkpoints``
     Real checkpoints: OPT and Llama-family models in fp32, WikiText-2 windows, the certified models' calibration and
     their integer graphs.
+``real_cells``
+    The ``--real`` option: a checkpoint's integer graph and prompts in place of random weights, and the rule that
+    decides which of the paper's cells take a real checkpoint.
 ``tampers``
     The trace-tampering attacks every timed decoder cell also runs.
+``client``
+    The CPU client in a process of its own, for the client's memory.
+``energy``
+    The GPU's energy counter (NVML), for the energy per query.
+``stats``
+    Seeded bootstrap intervals of the reported medians, ratios and differences.
 """

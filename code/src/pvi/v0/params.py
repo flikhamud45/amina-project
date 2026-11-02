@@ -43,6 +43,7 @@ class SecurityParams:
     bounds the prover's memory)."""
 
     def columns_for(self, group: str) -> int:
+        """The opened columns ``t`` of a commitment plan's ``group``."""
         return dict(self.group_columns)[group]
 
 
@@ -69,8 +70,8 @@ def params_for(lam: float, n_checks: int, *, rate: int = 4, fiat_shamir: bool = 
 
 def soundness_bits(params: SecurityParams, shapes: list[tuple[int, int]], mode: str = "C",
                    columns: list[int] | None = None) -> float:
-    """``-log2`` of the total soundness error: the sum over the checks of ``p**-r`` (Freivalds) plus,
-    in mode C, the column term ``prod_{i<t} (m-1-i)/(n-i)``.  ``shapes`` holds ``(m, n)`` per check --
+    """``-log2`` of the total soundness error, less ``grinding_bits`` under Fiat--Shamir: the sum over
+    the checks of ``p**-r`` (Freivalds) plus, in mode C, the column term ``prod_{i<t} (m-1-i)/(n-i)``.  ``shapes`` holds ``(m, n)`` per check --
     each op's ``(k, n)`` under the per-op commitment, and one entry per committed matrix of a plan
     (``plan.shapes()``: a row matrix checks its op, message length ``k``; a col matrix every op it
     stacks, message length their rows together) -- and ``columns`` each check's ``t`` (default:

@@ -33,7 +33,7 @@ C's fixed part (:func:`pvi.commit.cost.proof_bytes`); nothing is measured here.
   tokens only, so beyond that length a byte-model estimate).
 
 Writes ``<out>.json`` (every crossover with its inputs), ``<out>.tex`` (the crossovers as LaTeX comment lines, also
-printed) and ``<out>.pdf`` (the figure, one column wide in the paper's style: 7 pt text; ``--no-figure`` skips it,
+printed) and ``<out>.pdf`` (the figure, one column wide in the paper's style: 8 pt text; ``--no-figure`` skips it,
 ``--figure <path>`` writes it there as well).  The figure draws the first ``--policy`` (the paper's plan ``cnn18c``)
 under Fiat--Shamir: mode-C bytes at 64 and 2,048 tokens and with V1 at 2,048; the Kpre client's time at 2,048 tokens
 for v0 and V1 against the fastest exact re-execution.  It needs matplotlib and takes a second on a laptop CPU.
@@ -162,22 +162,26 @@ def comment_lines(out: dict) -> list[str]:
 
 
 def draw(out: dict, cfg: dict, paths: list[str]) -> None:
-    """The figure: the first plan under Fiat--Shamir, written to every one of ``paths``."""
+    """The figure: the first plan under Fiat--Shamir, written to every one of ``paths``.  Open circles mark the
+    crossings the text quotes: ``Q*`` on the left, ``L*`` on the right."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.rcParams.update({"font.family": "serif", "font.serif": ["STIXGeneral"], "mathtext.fontset": "stix",
-                         "font.size": 7, "axes.labelsize": 7, "legend.fontsize": 7, "xtick.labelsize": 7,
-                         "ytick.labelsize": 7, "axes.spines.top": False, "axes.spines.right": False,
+                         "font.size": 8, "axes.labelsize": 8, "legend.fontsize": 7.5, "xtick.labelsize": 8,
+                         "ytick.labelsize": 8, "axes.spines.top": False, "axes.spines.right": False,
                          "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
                          "xtick.major.size": 2.5, "ytick.major.size": 2.5, "xtick.major.pad": 2,
                          "ytick.major.pad": 2, "axes.labelpad": 2, "pdf.fonttype": 42, "ps.fonttype": 42})
     ours, ours_k = "#1f5f99", "#7fb2e5"
     kpre = "\U0001d5aa" + "$_{\\mathrm{pre}}$"      # upright sans-serif K, the paper's mode Kpre
     final, W = out["policies"][0], out["weights_bytes"]
+    mark = {"marker": "o", "ms": 3.2, "mfc": "white", "mew": 0.9, "ls": "none", "zorder": 4, "clip_on": False}
+    legend = {"frameon": False, "handlelength": 1.6, "borderpad": 0.2, "labelspacing": 0.15, "borderaxespad": 0.2}
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(3.375, 1.9))
     qs = [10 ** (i / 20) for i in range(0, 61)]
-    a1.plot(qs, [W / 1e9] * len(qs), "k--", lw=0.9, label="weights")
+    a1.plot(qs, [W / 1e9] * len(qs), "k--", lw=0.9)
+    a1.text(qs[-1], W / 1e9 * 1.25, "weights", ha="right", va="bottom")
     style = {(64, "v0"): (ours, "-", "64"), (2048, "v0"): (ours, ":", "2,048"),
              (2048, "v1"): (ours_k, "-", "2,048, V1")}
     for row in out["panel1"]:
@@ -185,25 +189,36 @@ def draw(out: dict, cfg: dict, paths: list[str]) -> None:
         if row["policy"] == final and row["fs"] and key in style:
             color, ls, lab = style[key]
             a1.plot(qs, [q * row["proof_bytes"] / 1e9 for q in qs], color=color, ls=ls, lw=1.1, label=lab)
+            if qs[0] <= row["Q_star"] <= qs[-1]:
+                a1.plot([row["Q_star"]], [W / 1e9], mec=color, **mark)
     a1.set_xscale("log")
     a1.set_yscale("log")
+    a1.set_xlim(qs[0], qs[-1])
+    a1.set_xticks([1, 10, 100, 1000])
+    a1.set_ylim(0.1, None)
     a1.set_xlabel("queries $Q$")
     a1.set_ylabel("client bytes (GB)")
-    a1.legend(loc="upper left", frameon=False, handlelength=1.6, borderpad=0.2, labelspacing=0.2)
+    a1.legend(loc="lower right", **legend)
     links = [10 ** (i / 20 - 1) for i in range(0, 61)]
+    t_r = cfg["reexec_s"]["2048"]["exact"]
     for row in out["panel2"]:
         if row["seq"] == 2048 and row["fs"] and row["protocol"] in ("v0 Kpre", "V1 Kpre"):
             v1 = row["protocol"].startswith("V1")
+            color = ours_k if v1 else ours
             a2.plot(links, [row["verify_s"] + 8 * row["proof_bytes"] / (L * 1e9) for L in links],
-                    color=ours_k if v1 else ours, lw=1.1, label="V1" if v1 else "v0")
-    t_r = cfg["reexec_s"]["2048"]["exact"]
+                    color=color, lw=1.1, label="V1" if v1 else "v0")
+            L = row["L_star_gbps"]
+            if L is not None and links[0] <= L <= links[-1]:
+                a2.plot([L], [t_r], mec=color, **mark)
     a2.plot(links, [t_r] * len(links), "k--", lw=0.9, label="re-exec.")
     a2.set_xscale("log")
     a2.set_yscale("log")
+    a2.set_xlim(links[0], links[-1])
+    a2.set_xticks([0.1, 1, 10, 100])
     a2.set_ylim(10, 1e3)
     a2.set_xlabel("link (Gb/s)")
     a2.set_ylabel(kpre + " client time (s)")
-    a2.legend(loc="upper right", frameon=False, handlelength=1.6, borderpad=0.2, labelspacing=0.2)
+    a2.legend(loc="upper right", **legend)
     fig.tight_layout(pad=0.3, w_pad=0.8)
     for path in paths:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

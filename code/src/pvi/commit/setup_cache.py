@@ -17,8 +17,8 @@ every proof byte are those of a fresh commitment (``tests/test_setup_cache.py``)
   weight op in the graph's order, its name (the tag), shapes, and a BLAKE2b-256 of its int8 weights and int64 bias.
   Different weights, biases, calibration, pruning or plan give a different key.
 * **Files.** ``<folder>/<key>.npz``: one ``uint8 [n, 32]`` array per tree and the tree names as JSON, saved with
-  ``numpy.savez`` (no pickle) to a temporary name and renamed into place. A Llama-2-13B commitment under cnn18c
-  (last block pruned) has 1,605,632 leaves, about 51 MB.
+  ``numpy.savez`` (no pickle) to a temporary name and renamed into place. A Llama-2-13B commitment
+  under the policy ``cnn18c`` (last block pruned) has 1,605,632 leaves, about 51 MB.
 * **Check on reading.** Before trusting a file, ``commit_graph`` recomputes ``cache_checks`` random leaves of every
   tree from the weights (:func:`check_group`, :func:`check_matrix`, :func:`check_table`: the encoded columns,
   exactly as an opening computes them, and their digests) and compares them; any

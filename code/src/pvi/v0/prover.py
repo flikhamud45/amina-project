@@ -9,6 +9,9 @@ from pvi.core.graph import IntGraph
 
 
 class Prover:
+    """The prover of protocol v0 for ``graph``: it holds the weights (in ``graph``) and, in mode C, the
+    ``commitments`` of :func:`pvi.v0.graph_commitment.commit_graph`."""
+
     def __init__(self, graph: IntGraph, *, device="cpu", commitments: dict[str, WeightCommitment] | None = None,
                  lean: bool = False):
         self.graph = graph
@@ -46,6 +49,8 @@ class Prover:
         return {name: t.open(self._looked_up[name]) for name, t in getattr(self.commitments, "tables", {}).items()}
 
     def fold(self, chis: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Mode C's ``u = chi^T [W | b]`` of every op of ``chis`` (step 3), from the weights on the
+        prover's device."""
         return {name: self.commitments[name].fold(chi, self.device, weight=self._weight(name))
                 for name, chi in chis.items()}
 

@@ -20,7 +20,8 @@
 \label{app:v1}
 
 This appendix proves Theorem~\ref{thm:v1}. It fixes the notation, states the verifier's checks
-and the GKR protocol precisely, proves four lemmas, and then proves the theorem.
+and the GKR protocol precisely, proves Lemma~\ref{lem:v1-logup} and four further lemmas, and then
+proves the theorem.
 
 \para{Notation.} $p = 15 \cdot 2^{27} + 1$, $\Fext = \F[\xi]/(\xi^8 - 11)$, and $S = \F + \xi\F$ is
 the set of elements of $\Fext$ whose coordinates of degree 2 to 7 vanish, so $|S| = p^2$. Integers
@@ -145,7 +146,7 @@ Lemma~\ref{lem:v1-window}, so $s_{ij} \in R_\Delta$ gives $1 - 2^{29} - 2^{16} <
 - 2^{16} = 939{,}458{,}561 > 2^{16} \ge W_{ij}$. If $\delta_{ij} \ge W_{ij}$, then $\delta_{ij} <
 2^{30} + 2^{16} < p$, so $\delta_{ij} \bmod p = \delta_{ij} \ge W_{ij}$. In both cases
 $\delta_{ij} \bmod p \notin [0, W_{ij})$. Since $1$ and $\xi$ are linearly independent over $\F$, an
-element $t + xw$ of $\Vtab$ equals $v_{ij}$ only if $w = W_{ij}$ and $t = \delta_{ij} \bmod p$,
+element $t + \xi w$ of $\Vtab$ equals $v_{ij}$ only if $w = W_{ij}$ and $t = \delta_{ij} \bmod p$,
 which would require $\delta_{ij} \bmod p < W_{ij}$. \qed
 
 \begin{lemma}[fractional-sum GKR]
@@ -282,5 +283,5 @@ mode $\sC$ it holds no weights, and (P4) is a property of the committed model, c
 honest commitment is computed, as is v0's claim range. With an untrusted commitment
 (Section~\ref{sec:setup-proof}) the bound must be published with the model. (v)~\emph{Completeness.}
 Honest multiplicities are below $2^{29} < p$ by (P5). The exception bin of width 1 is not covered
-by (P5), so a proof with more than $2^{29}$ clamped entries cannot be encoded; this affects
-completeness only.
+by (P5), and the multiplicities are encoded like claims, which must be below $2^{29}$; a proof with
+$2^{29}$ or more clamped entries therefore cannot be encoded. This affects completeness only.

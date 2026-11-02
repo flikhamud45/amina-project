@@ -4,8 +4,8 @@ The adaptive game (``experiments/attack/adaptive_game.py``) replaces the per-neu
 recursion with a matrix-form evaluation so that its sweep over queries, plans, caps and samplers is
 tractable; its numbers are valid only if the two agree everywhere to within ``1e-9``.  This test
 checks that on the MNIST MLP, for every sampler of the game's family and for a range of forged
-traces: honest, single-neuron flips in each hidden layer, a multi-neuron zeroing plan and a stealthy
-ceiling plan, at ``n_paths`` of 1 and several.
+traces: honest, a single-neuron flip in each hidden layer and a multi-neuron stealthy flip under
+in-distribution ceilings, at ``n_paths`` of 1, 10 and 250.
 
 The traces here are built from random queries rather than the dataset, which keeps the test free of
 a data download; acceptance is a property of the trace and the sampler, not of whether the query is

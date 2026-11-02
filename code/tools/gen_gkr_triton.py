@@ -8,14 +8,16 @@ import pathlib
 import sys
 
 OUT = pathlib.Path(__file__).resolve().parents[1] / "src" / "pvi" / "v1" / "gkr_triton.py"
-D = 8
+D = 8                   # the degree of the extension field F_{p^8}: one plane per coefficient
 
 
 def args(prefix):
+    """``prefix0, ..., prefix7``: the names of one extension element's planes."""
     return ", ".join(f"{prefix}{i}" for i in range(D))
 
 
 def emul():
+    """The Triton function ``_emul``: the product of two elements of ``F_{p^8}``, written out term by term."""
     lines = ["@triton.jit", f"def _emul({args('a')}, {args('b')}, P, MU, B11):",
              '    """``a b`` in ``F_{p^8}`` (Montgomery planes): '
              '``c_k = sum_{i+j=k} a_i b_j + 11 sum_{i+j=k+8} a_i b_j``."""']
@@ -38,20 +40,24 @@ def emul():
 
 
 def load(name, ptr, idx, stride, mask):
+    """Lines loading the 8 planes ``name0..name7`` of an SoA array (plane ``k`` at ``ptr + k * stride``)."""
     return "\n".join(f"    {name}{k} = tl.load({ptr} + {k} * {stride} + {idx}, mask={mask}, other=0)"
                      f".to(tl.uint32, bitcast=True)" for k in range(D))
 
 
 def store(name, ptr, idx, stride, mask):
+    """Lines storing the 8 planes ``name0..name7``, as :func:`load` lays them out."""
     return "\n".join(f"    tl.store({ptr} + {k} * {stride} + {idx}, {name}{k}.to(tl.int32, bitcast=True), mask={mask})"
                      for k in range(D))
 
 
 def ext2(fn, out, a, b):
+    """Lines applying a plane-wise field operation ``fn`` (``_add``, ``_sub``) to two extension elements."""
     return "\n".join(f"    {out}{k} = {fn}({a}{k}, {b}{k}, P)" for k in range(D))
 
 
 def emul_call(out, a, b):
+    """A line computing ``out = a b`` in ``F_{p^8}`` with ``_emul``."""
     return f"    {args(out)} = _emul({args(a)}, {args(b)}, P, MU, B11)"
 
 
@@ -144,10 +150,12 @@ if triton is not None:
 
 
 def indent(s, n=4):
+    """``s`` indented by ``n`` spaces (the kernels are defined under ``if triton is not None:``)."""
     return "\n".join((" " * n + line) if line else line for line in s.split("\n"))
 
 
 def kernels():
+    """The source of every Triton kernel, in order; :func:`render` leaves out ``_round_kernel`` and ``_fold_kernel``."""
     parts = []
     # ---- the leaves
     parts.append(f'''@triton.jit
@@ -700,6 +708,7 @@ def render() -> str:
 
 
 def main():
+    """Write the module, or with ``--check`` compare it with :func:`render`."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="only compare the module with the generator's output")
     args = ap.parse_args()

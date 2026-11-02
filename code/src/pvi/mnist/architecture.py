@@ -24,7 +24,7 @@ Fused activations
 -----------------
 Anchuri et al.'s relation folds the non-linearity into the neuron: ``a_j`` is the
 *post*-activation value, and there is one trace entry per neuron per layer.  This
-module follows that convention, so ``Dense`` and ``Conv2d`` carry their own
+module follows that convention, so :class:`DenseLayer` and :class:`Conv2dLayer` carry their own
 ``activation`` rather than appearing as separate ReLU layers.  The final
 classification layer uses ``identity`` so that the trace's output entries are the
 logits, which is what ``out(trc)`` reads (their Remark 3).
@@ -36,13 +36,13 @@ Committing one Merkle leaf per scalar weight would make an opening cost
 hashes" (their Section 8.1) so that a single opening yields every weight a node
 needs.  This is modelled by *weight groups*: each neuron maps to exactly one group, and the
 group's committed value is the concatenation of that neuron's incoming weights
-with its bias.  For ``Dense`` a group is a row of ``W``; for ``Conv2d``, where
+with its bias.  For a dense layer a group is a row of ``W``; for a convolution, where
 weights are shared across spatial positions, a group is an output channel's
 kernel.
 
 Layers without parameters
 -------------------------
-``MaxPool2d`` has no weights, and its local relation is ``a_j = max_{i in G_j} a_i``
+:class:`MaxPool2dLayer` has no weights, and its local relation is ``a_j = max_{i in G_j} a_i``
 rather than an affine map followed by ``phi``.  Anchuri et al.'s formalism only
 spells out the affine case, but the protocol needs no more than "a node's value is
 a fixed, publicly known function of its parents", which pooling satisfies.  This is
@@ -259,8 +259,9 @@ class InputLayer(Layer):
 class DenseLayer(Layer):
     """Fully connected layer with a fused activation.
 
-    Every neuron's parent set is the whole previous layer, so a path step from
-    this layer picks a uniformly random neuron of the layer below.
+    Every neuron's parent set is the whole previous layer, so under the uniform
+    sampler a path step from this layer picks a uniformly random neuron of the
+    layer below.
     """
 
     name: str

@@ -1,6 +1,6 @@
 """V1's query: the cut operations' requantised values, proved with a windowed logUp-GKR and no new commitment.
 
-The messages, in order (under Fiat-Shamir each is absorbed before the next challenge is drawn):
+The messages, in order (under Fiat--Shamir each is absorbed before the next challenge is drawn):
 
 * the values frame (``PVC3``: the sent values ``s`` of the cut operations, the claims ``Z`` of the clear ones, and
   the lookup rows of a commitment plan, as in v0), the exceptions frame ``PVX1`` (every clamped entry outside its
@@ -13,16 +13,16 @@ The messages, in order (under Fiat-Shamir each is absorbed before the next chall
   and v0's folded rows ``u`` of the clear operations;
 * in mode C, the column indices and the openings, as in v0.
 
-The verifier's checks, in order, with their rejection labels: (D1) and (D2) ``range_or_shape`` (decoding and the
-derivation, with the cut operations' values and inputs in their ranges), (D3) ``token``, the lookup checks, (D4)
-``cut_exception``, (D5) ``cut_multiplicities``, (G) ``cut_gkr``, (F1) ``freivalds`` (the clear operations), (F2)
-``kpre_y``, (F3) ``cut_final``, (F4) ``cut_logup``, then the column checks (C).  The verifier here is the
-non-streaming one (CPU or GPU tensors, with the GKR and the final checks on the CPU); mode K and the streaming
-verifier do not support V1 (``NotImplementedError``).
+The verifier's checks, in order, with their rejection labels: decoding (``range_or_shape``), (D3) ``token``, (D1)
+and (D2) ``range_or_shape`` (the derivation, with the cut operations' values and inputs in their ranges), the lookup
+checks, (D4) ``cut_exception``, (D5) ``cut_multiplicities``, (G) ``cut_gkr``, (F1) ``freivalds`` (the clear
+operations), (F2) ``kpre_y``, (F3) ``cut_final``, (F4) ``cut_logup``, then the column checks (C).  The verifier
+here is the non-streaming one (CPU or GPU tensors, with the GKR and the final checks on the CPU); mode K and the
+streaming verifier do not support V1 (``NotImplementedError``).
 
 Interactive challenges are the verifier's own (drawn from a CSPRNG at the moment each is needed).  Since both
 parties run in one process, the GKR's round challenges are drawn when the prover asks for them, after its message,
-and the verifier checks against the ones it drew (:class:`_Recorder`, :class:`_Replayer`).  Under Fiat-Shamir the
+and the verifier checks against the ones it drew (:class:`_Recorder`, :class:`_Replayer`).  Under Fiat--Shamir the
 prover runs the GKR on a fork of the transcript and the verifier re-derives every challenge from its own.
 """
 
@@ -203,6 +203,7 @@ def run_cut_query(prover: Prover, verifier: Verifier, x: torch.Tensor, *, seed: 
     """One V1 query (always on the wire: ``PVC3`` values, packed field elements).  Returns what
     :func:`pvi.v0.query.run_query` returns, with the cut's bytes (``cut_exc``, ``cut_mult``, ``cut_gkr``) and
     timings, and ``transcript`` (with Fiat--Shamir the transcript's digest at the query's end, else None).
+    ``sampler``: as in :func:`pvi.v0.query.run_query`.
 
     ``cheat`` (tests only) makes the prover dishonest at one message: ``"witness"(values, witness, exc, mult)``
     edits its sent values, leaves, exceptions or counts in place; ``"gkr"(blobs)``, ``"fold"(parts)`` return

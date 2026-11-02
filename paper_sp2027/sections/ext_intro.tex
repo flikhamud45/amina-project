@@ -6,40 +6,50 @@
 \subsection{Motivation and Costs in Detail}
 \label{ext:intro-costs}
 
-\para{Motivation.} A company that pays a cloud provider to serve a model to its users cannot tell
-from a response which computation produced it. The provider may serve a cheaper model, or it may
-alter the computation on chosen queries to return answers of its choice, which harms any process
-that acts on those answers, such as payment approval or fraud flagging. The company cannot re-run
-the model to find out, since it lacks the weights, the hardware or both; that is why it outsourced
+\para{Motivation.} A company that pays a cloud provider to serve a model to its customers cannot tell
+from a response which computation produced it. The provider may serve a cheaper model, or alter
+the computation on chosen queries to return answers of its choice. This harms any process that
+acts on those answers, such as payment approval or fraud flagging. The company cannot re-run the
+model to find out, since it lacks the weights, the hardware or both; that is why it outsourced
 inference.
 
-\para{Costs.} Without V1, the prover's folds and openings grow with the model but not with the
-input, and the prover is the protocol's strongest axis. Computing its column openings and
-folds with exact int8 tensor-core products instead of float64 makes it \ImproveOpenRange{}$\times$ faster on
-Llama-2 blocks, and on one \PlatformGpu{} it proves a 256-token GPT-2 response to a 64-token prompt in
-\GenGptProveC{}\,s. On matched models it is \CompareProverMin{}--\CompareProverMax{}$\times$ faster than published zkSNARK provers, partly
-because all of them but zkLLM ran on CPUs, and partly because they also prove the operations
-without weights, which our verifier recomputes, and many of them hide the weights
-(Table~\ref{tab:eval-compare})\TodoCompareRange{}. The main cost is the proof. It carries the
-results of every weight operation and so grows with the prompt: \ProofLlamaShortC{} for a 64-token Llama-2-7B
-query and \ProofLlamaLongC{} at 2{,}048 tokens\TodoProofIntro{}, against 183\,kB for zkLLM. V1 makes it
-\VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens on the real checkpoints (the full OPT-1.3B: \VOneOptMCVZeroGB{} to
-\VOneOptMCVOneGB{}\,GB), \VOneRealOptMLongC{}$\times$ on the certified OPT-1.3B in mode $\sC$ and \VOneRatioRealOptLExact{}$\times$ on the
-real OPT-6.7B in $\Kpre$ at 2{,}048 tokens, at the price of a GKR in the prover whose work grows with the
-number of results (OPT-125M at 2{,}048 tokens: \VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s) and a slower CPU
-verifier: \VOneVerifyRatioLlama{}$\times$ v0's on the full Llama-2-7B at 2{,}048 tokens (\VOneVerifyLlama{}\,s, against v0's on the same queries)\TodoVOneIntro{}. The verifier recomputes attention, so its cost grows with the square of the prompt
-length. With eight CPU threads and native exact kernels, a client that could keep the weights but
-keeps a $\Kpre$ key derived from them instead verifies a 64-token query of the full Llama-2-7B in \CpuVerifyShort{}\,s, against \CpuReexecShort{}\,s for exact re-execution
-on the same threads, and a 2{,}048-token query in \CpuVerifyLong{}\,s, against \CpuReexecLong{}\,s (Fiat--Shamir). Our GPU
-claim decoder and fused exact attention kernel make the streaming GPU verifier
-\ImproveGpuvOptM{}$\times$ faster on OPT-1.3B blocks at that length. The protocol is not
-zero-knowledge: the claims of $\lceil k/T\rceil$ queries of $T$ tokens reveal a weight matrix with
-rows of length $k$. Finally, the provider must serve the integer model. Moving SmoothQuant's
-per-channel scales~\cite{xiao2023smoothquant} into the gains of the integer LayerNorm brings its
-WikiText-2 perplexity at 2{,}048 tokens within factors of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 on OPT-125M,
-OPT-1.3B and OPT-6.7B, from \QualityScalarOptS{}, \QualityScalarOptM{} and \QualityScalarOptL{} with one scalar gain, without changing any operation
-that the protocol checks (Section~\ref{sec:quality}); with a fixed public prefix the same holds for
-Llama-2-7B ($\times$\LlamaSevenRatio{}), but not yet for Qwen3-4B.
+\para{Prover.} The prover is the protocol's strongest axis. On matched models it is
+\CompareProverMin{}--\CompareProverMax{}$\times$ faster than published zkSNARK provers
+(Table~\ref{tab:eval-compare})\TodoCompareRange{}. Part of this gap is hardware, since all of them
+but zkLLM ran on CPUs, and part is scope: they also prove the operations without weights, which our
+verifier recomputes, and many of them hide the weights. Without V1, the prover's folds and column
+openings grow with the model but not with the input length. Computing them with exact int8
+tensor-core products instead of float64 makes the prover \ImproveOpenRange{}$\times$ faster on
+Llama-2 blocks, and on one \PlatformGpu{} it proves a 256-token GPT-2 response to a 64-token prompt
+in \GenGptProveC{}\,s.
+
+\para{Proof.} The main cost is the proof. It carries the result of every weight operation and so
+grows with the prompt: \ProofLlamaShortC{} for a 64-token Llama-2-7B query and \ProofLlamaLongC{} at
+2{,}048 tokens\TodoProofIntro{}, against 183\,kB for zkLLM. At 2{,}048 tokens V1 makes it
+\VOneRatioRandom{}$\times$ smaller on the full models (OPT-1.3B in mode~$\sC$: \VOneOptMCVZeroGB{} to
+\VOneOptMCVOneGB{}\,GB) and \VOneRatioRealOptLExact{}$\times$ on the real OPT-6.7B in
+mode~$\Kpre$. The price is a GKR in the
+prover whose work grows with the number of results (OPT-125M at 2{,}048 tokens:
+\VOneOptSProveVZero{} to \VOneOptSProveVOne{}\,s) and a slower CPU verifier, \VOneVerifyRatioLlama{}$\times$
+v0's time on the same 2{,}048-token queries of the full Llama-2-7B (\VOneVerifyLlama{}\,s)\TodoVOneIntro{}.
+
+\para{Verifier.} The verifier recomputes attention, so its cost grows with the square of the
+prompt length. A CPU client in mode~$\Kpre$ keeps a key derived from the weights instead of the
+weights themselves. With native exact kernels on eight threads, it verifies a 64-token query of the
+full Llama-2-7B in \CpuVerifyShort{}\,s and a 2{,}048-token query in \CpuVerifyLong{}\,s
+(Fiat--Shamir), against \CpuReexecShort{}\,s and \CpuReexecLong{}\,s for exact re-execution with the
+weights on the same threads. Decoding the claims on the GPU and a fused exact attention kernel make
+the streaming GPU verifier \ImproveGpuvOptM{}$\times$ faster on OPT-1.3B blocks at 2{,}048 tokens.
+
+\para{Weights and quality.} The protocol is not zero-knowledge: the claims of $\lceil k/T\rceil$
+queries of $T$ tokens reveal a weight matrix with rows of length $k$. The provider must also serve
+the integer model. Folding SmoothQuant's per-channel scales~\cite{xiao2023smoothquant} into the
+gains of the integer LayerNorm brings the integer model's WikiText-2 perplexity at 2{,}048 tokens to
+within a factor of \QualityRatioOptS{}, \QualityRatioOptM{} and \QualityRatioOptL{} of fp32 on
+OPT-125M, OPT-1.3B and OPT-6.7B, from \QualityScalarOptS{}, \QualityScalarOptM{} and
+\QualityScalarOptL{} with one scalar gain, and changes no operation that the protocol checks
+(Section~\ref{sec:quality}). With a fixed public prefix, Llama-2-7B is within a factor of
+\LlamaSevenRatio{}, while our integer Qwen3-4B stays at a factor of \QwenLRatio{}.
 
 \subsection{Related Work in Detail}
 \label{ext:related}
@@ -137,6 +147,6 @@ our knowledge, ours is the first Freivalds-based proof of inference that is full
 transformers, with attention recomputed by the verifier from checked values, whose client in
 mode~$\sC$ needs no enclave, no stored copy of the weights and no weight-derived secret. It uses no
 SNARK, only a hash function and a linear code, and with the setup proof it does not trust the party
-that computes the commitment. Its novelty lies in this combination for a weightless,
-GPU-less client, not in a new cryptographic primitive: the per-query check is the evaluation
+that computes the commitment. Its novelty lies in this combination for a client without the
+weights or a GPU, not in a new cryptographic primitive: the per-query check is the evaluation
 protocol of a linear-code polynomial commitment applied to every matrix product of the model.

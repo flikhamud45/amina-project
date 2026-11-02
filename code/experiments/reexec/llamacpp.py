@@ -7,11 +7,11 @@ Produces the llama.cpp rows of ``tab:options`` and ``tab:eval-reexec`` and the t
 tier ``cpuv``; ``experiments/paper/numbers.py``).
 
     python -m experiments.reexec.llamacpp --model llama2-7b --seq 64 2048 --types q8_0 bf16 --reps 5 --threads 8 \\
-        --llamacpp-dir ../logs/final/llamacpp
+        --llamacpp-dir ../logs/<name>/llamacpp
     python -m experiments.reexec.llamacpp --model llama2-7b --layers 1 --seq 64 --types q8_0 bf16 --reps 2 \\
-        --threads 8 --llamacpp-dir ../logs/rehearsal/llamacpp                 # the rehearsal's cell
+        --threads 8 --llamacpp-dir ../logs/<name>/llamacpp              # run.sh --rehearsal's cell
     python -m experiments.reexec.llamacpp --model llama2-7b --real meta-llama/Llama-2-7b-hf --seq 64 2048 \\
-        --types q8_0 bf16 --reps 5 --threads 8 --llamacpp-dir ../logs/final/llamacpp
+        --types q8_0 bf16 --reps 5 --threads 8 --llamacpp-dir ../logs/<name>/llamacpp
 
 **Build.**  llama.cpp's release v0.6.0 (build b11429, commit ``d8123504``), cloned (``git clone --depth 1``) into
 ``<--llamacpp-dir>/src`` unless ``--llamacpp-src`` names a checkout; its commit must be the release's.  CMake

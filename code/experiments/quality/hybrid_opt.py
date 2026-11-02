@@ -254,7 +254,7 @@ class Hybrid:
     @staticmethod
     def _deq64(op, m: dict) -> torch.Tensor:
         """The dequantised weight in the real input's domain, float64: ``w_int s_w`` (``w_int s_z / s_in`` for a
-        smoothed input), rounded to float32 (the arithmetic of the reported attribution)."""
+        smoothed input), rounded to float32 (the arithmetic of the attribution the paper reports)."""
         if "deq" not in m:
             w_int = op.weight.double()
             if m["s_w"] is None:

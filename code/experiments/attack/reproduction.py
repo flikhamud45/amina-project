@@ -54,6 +54,7 @@ def load_setup(setup: SubstitutionSetup, models: Path) -> tuple[TracedNetwork, T
 
 
 def evaluation_queries(setup: SubstitutionSetup, count: int, seed: int = 0) -> np.ndarray:
+    """``count`` test queries of the setting's evaluation dataset, drawn without replacement with ``seed``."""
     dataset = setup.eval_dataset()
     pool = dataset.test_x.reshape(len(dataset.test_x), -1)
     index = np.random.default_rng(seed).choice(len(pool), size=min(count, len(pool)), replace=False)
@@ -61,11 +62,13 @@ def evaluation_queries(setup: SubstitutionSetup, count: int, seed: int = 0) -> n
 
 
 def parties(network: TracedNetwork, params: ProtocolParams) -> tuple[Prover, Verifier]:
+    """An honest prover and the verifier of ``network``'s commitment."""
     commitment = ModelCommitment(network)
     return Prover(network, commitment, params), Verifier.from_commitment(commitment, params)
 
 
 def measure_correctness(network: TracedNetwork, queries: np.ndarray, challenges: int, zero_tolerance: int) -> dict:
+    """Completeness: the honest prover's acceptance rate, with the protocol's tolerance and without it."""
     params = ProtocolParams()
     prover, verifier = parties(network, params)
     accepted, runs = 0, 0

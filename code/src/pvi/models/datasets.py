@@ -44,6 +44,8 @@ SQUIRREL_CLASSES = [335]
 
 
 def normalise(x_uint8: torch.Tensor, family: str) -> torch.Tensor:
+    """uint8 images ``[B, C, H, W]`` -> float32, scaled to ``[0, 1]`` and standardised with ``family``'s channel
+    means and deviations (``"mnist"``, ``"cifar10"`` or ``"imagenet"``)."""
     mean = torch.tensor(_MEAN[family], device=x_uint8.device)[None, :, None, None]
     std = torch.tensor(_STD[family], device=x_uint8.device)[None, :, None, None]
     return (x_uint8.float() / 255.0 - mean) / std

@@ -13,17 +13,18 @@ records of its `bench` and `batch` tiers, written by `costs/bench.py --platform 
 counts included, comes from those two folders, and every other measured number from the run's job logs
 (`logs/final/` at the repository root while the run writes them, stored afterwards as `final/`;
 [`experiments/paper/README.md`](../experiments/paper/README.md)). [The final run's
-records](#the-final-runs-records) says what the artifact keeps of them. The published
-systems' values come from `comparison/tables/reported_curated.csv` (and zkLLM's prover on the run's GPU model from
-`results/zkllm_l40s/`), and `tab:params` and `tab:setup` from the library's parameters. The paper's generator reads none of the stored roots below. The stored files serve as inputs
-that scripts need (the MNIST networks, the literature catalogue), as the records behind the values the paper prints
-before the final run (`paper_sp2027/fallback/`, checked against them by the tests named below), and as reference
-measurements of other platforms.
+records](#the-final-runs-records) says what the artifact keeps of them. The published systems' values come from
+`comparison/tables/reported_curated.csv` (and zkLLM's prover on the run's GPU model from `results/zkllm_l40s/`), and
+`tab:params` and `tab:setup` from the library's parameters. Apart from these, the paper's generator reads none of the
+stored files below. They serve as inputs that scripts need (the MNIST networks, the literature catalogue), as the
+records behind the values the paper prints before the final run (`paper_sp2027/fallback/`, checked against them by
+the tests named below), and as reference measurements of other platforms.
 
 Commands run from `code/` with `PYTHONPATH=src:.` (Windows: `PYTHONPATH="src;."`); paths are relative to this folder
 unless they start with `artifacts/`. The provenance columns state what each file's own content records: the commit
-(`git_sha`, `git` or `env.git_sha`; commits of this repository's history), the GPU and CPU models (`prover_hw`,
-`verifier_hw`, `env.gpu`, `env.cpu`, `gpu`, `cpu`), library versions and the command's options (`config`, `args`).
+(`git_sha`, `git` or `env.git_sha`; commits of the development history, which the anonymous snapshot does not
+carry), the GPU and CPU models (`prover_hw`, `verifier_hw`, `env.gpu`, `env.cpu`, `gpu`, `cpu`), library versions
+and the command's options (`config`, `args`).
 Where a file records none of them, the entry says "provenance not recorded in the file" and names the script that
 writes files of that format.
 
@@ -34,7 +35,7 @@ writes files of that format.
 | `comparison/` | the benchmark's raw roots `raw_<platform>/`, their tables `tables_<platform>/`, `tables/`, `literature/`, `excluded_cells.csv`; described in [`comparison/README.md`](comparison/README.md) | `costs/bench.py`, `comparison/aggregate.py`, `comparison/literature.py`, `attack/path_test_bound.py` | `experiments/comparison/`, `experiments/paper/`, `tests/test_comparison_tables.py`, `tests/test_paper_numbers.py` |
 | `results/` | the attack's documents, the sampler's distances, the quality records, development measurements, zkLLM's demo on an L40S | the scripts of `experiments/attack/`, `generation/`, `quality/`, `costs/`, `deployment/`, `v1/` | `tests/test_paper_numbers.py` (the fallback); `experiments/paper/bench.py` (`zkllm_l40s/summary.csv`) |
 | `cache/` | not in the repository: the dataset cache of `pvi.models.datasets` (`PVI_CACHE`) | `pvi.models.datasets` | `costs/bench.py` (image models) |
-| `final/` | added after the final run: its job logs, documents and dry-run listing, and the machine's description ([below](#the-final-runs-records)) | `experiments/package/run.sh` (a copy of `logs/final/`) | `experiments/paper/numbers.py --logs artifacts/final` |
+| `final/` | added after the final run: its job logs, documents and dry-run listing, and the machine's description ([below](#the-final-runs-records)) | the `rsync` command of [`experiments/package/README.md`](../experiments/package/README.md), Sec. 6 (a copy of `logs/final/`) | `experiments/paper/numbers.py --logs artifacts/final` |
 
 `.gitignore` excludes `models/cnn/` and `cache/`; everything else listed here is committed (`final/` once the run
 is done).
@@ -210,7 +211,7 @@ The run writes its job logs and documents to `logs/final/` at the repository roo
 * `comparison/raw_final/` as the run wrote it, and `comparison/tables_final/`
   (`python -m experiments.comparison.aggregate --platform final`);
 * `final/`: a copy of `logs/final/` without its caches (`triton/`, `native/`, `setup_cache/`, `llamacpp/`,
-  `ref_*.pt`), that is every job log `sp-<cell>-<job id>.out` (the records are its lines that start with `{`), the
+  `ref_*.pt`) and zkLLM's checkout (`zkllm/home`), that is every job log `sp-<cell>-<job id>.out` (the records are its lines that start with `{`), the
   attack tier's `attack/` documents, the tv tier's `sampler_tv_*.json`, the dry-run listing `dryrun.txt`, the
   nodes' environment snapshots and the inputs' hashes `env/`, the GPU telemetry of every job `telemetry/` and the
   smoke's pytest logs `smoke_pytest-*` (`experiments/package/README.md`, Secs. 5 and 6).

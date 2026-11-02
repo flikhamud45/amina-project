@@ -12,8 +12,7 @@ Usage (standard library only):
 
 A run folder is named ``<model>-T<seq>`` (``llama2-7b-T2048``; a trailing ``-<number>`` is accepted) and holds
 ``bin_times.log``, ``env.txt``, ``verdicts.txt`` and ``time-*.txt``, as ``run_zkllm.sh prove`` writes them (one
-folder per prompt length; ``errors.txt``: the first error line of each script that printed one, at a length where
-zkLLM's demo failed)."""
+folder per prompt length; ``errors.txt``: the scripts' distinct error lines, each with its count, at most 20)."""
 import csv
 import gzip
 import json
@@ -98,8 +97,8 @@ def verdicts(run_dir: Path) -> dict:
 
 
 def errors(run_dir: Path) -> list[str]:
-    """The run's ``errors.txt`` (``run_zkllm.sh prove``: the first error line of each script that printed one, counted
-    with ``uniq -c``), one entry per line; empty when there is none."""
+    """The run's ``errors.txt`` (``run_zkllm.sh prove``: the scripts' distinct error lines, counted with ``uniq -c``,
+    at most 20), one entry per line; empty when there is none."""
     path = Path(run_dir) / "errors.txt"
     return [" ".join(x.split()) for x in path.read_text(encoding="utf-8", errors="replace").splitlines()
             if x.strip()] if path.exists() else []
@@ -152,6 +151,8 @@ def write_csv(folder: Path) -> list[dict]:
 
 
 def report(R: Path, L: int) -> None:
+    """Print a run's figures: each proof binary's median time, the time per layer and for ``L`` layers, the scripts'
+    wall times and the job GPU's peak memory."""
     wall = {}
     for f in R.glob("time-r*-L*-*.txt"):
         rep, layer, stage = re.match(r"time-r(\d+)-L(\d+)-(.+)\.txt", f.name).groups()

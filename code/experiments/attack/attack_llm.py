@@ -95,6 +95,7 @@ class NeuronHook:
 
 
 def last_logits(model, last_ids, past):
+    """Next-token logits (fp32) of the last token ``last_ids``, run against the cached prefix ``past``."""
     # A fresh DynamicCache per call: forward appends to the cache it is given, so reusing
     # one would grow the prefix on every trial. from_legacy_cache wraps the stored
     # tensors and update() concatenates into new ones, so the prefix itself never changes.
@@ -103,6 +104,7 @@ def last_logits(model, last_ids, past):
 
 
 def prefix_cache(model, ids):
+    """Keys and values of every token of ``ids`` but the last, in the legacy tuple format."""
     with torch.no_grad():
         out = model(input_ids=ids[:, :-1], use_cache=True)
     pkv = out.past_key_values
@@ -155,6 +157,8 @@ def smallest_flip(model, hook, last_ids, past, neuron, original, honest_tok, tar
 
 def attack_prompt(model, tok, hooks, layers, text, target_tok, topk, natural, forcing=None, *, max_value=1e3,
                   steps=24):
+    """The smallest single-neuron edit, over ``layers``, that changes the next token of ``text`` (to ``target_tok``
+    when given, else to anything) and its natural-range statistics; ``flip`` is ``None`` if no candidate works."""
     ids = tok(text, return_tensors="pt").input_ids.to(model.device)
     past, last_ids = prefix_cache(model, ids), ids[:, -1:]
     with torch.no_grad():
