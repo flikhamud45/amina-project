@@ -53,12 +53,13 @@ the SwiGLU product, Llama-2-7B (our benchmark's exact structure) is at $\times$\
 $\times$\TinyLlamaRatio{} of fp32 at 2{,}048 tokens, and Llama-2-13B at $\times$\LlamaThirteenRatio{} of fp16
 ([\LlamaThirteenCI{}]); with a per-pair balance of the q/k norms' gains as
 well, Qwen3-1.7B is at $\times$\QwenMRatio{} and Qwen3-4B at $\times$\QwenLRatio{}. These graphs are the ones whose
-costs we report. A per-token exponent at the SwiGLU product would bring Qwen3-1.7B to $\times$\QwenMExpRatio{}
+costs we report (Llama-2-7B's cost cells were built with its constants fixed in advance and a prefix one token
+shorter; constants change no cost). A per-token exponent at the SwiGLU product would bring Qwen3-1.7B to $\times$\QwenMExpRatio{}
 and Qwen3-4B to $\times$\QwenLExpRatio{}, but it changes two operations per block and leaves the down projection
 outside V1's cut ($\VOneDownClaims{}$ claims of a 2{,}048-token Llama-2-7B query), so we count it only as a possible
 improvement and none of our cost tables uses it. Qwen3-4B forms a second massive activation, at the
-first token after the prefix, that no public prefix we tried takes, and one static int8 scale per
-residual stream cannot hold it; a per-token residual scale would change the graph and V1. Soundness holds for any committed integer model; these
+first token after the prefix, that a two-token public prefix takes only barely, and one static int8 scale per
+residual stream holds it poorly; a per-token residual scale would change the graph and V1. Soundness holds for any committed integer model; these
 numbers concern only how well that model serves.
 
 \para{V1.} V1 is an option, not a replacement. At 2{,}048 tokens it makes the proof

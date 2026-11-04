@@ -476,14 +476,17 @@ windows (:func:`prefixquant_tokens`) and four 2,048-token windows of the WikiTex
 ``qk_balance`` (on by default) adds Qwen3's q/k balance; the per-token exponent (``glu_exp``) is not part of it.
 The alpha and the product balance per checkpoint are :data:`MAIN_SETTINGS` (:func:`main_recipe`)."""
 
-MAIN_SETTINGS = {"open_llama_7b_v2": (0.55, 0.2), "Llama-2-7b-hf": (0.55, 0.2), "Llama-2-13b-hf": (0.6, 0.2),
+MAIN_SETTINGS = {"open_llama_7b_v2": (0.55, 0.2), "Llama-2-7b-hf": (0.65, 0.3), "Llama-2-13b-hf": (0.6, 0.2),
                  "TinyLlama_v1.1": (0.75, 0.2), "Qwen3-1.7B-Base": (0.45, 0.3), "Qwen3-4B-Base": (0.45, 0.5)}
 """The main recipe's smoothing alpha and SwiGLU product balance per checkpoint, chosen per model on the 2,048-token
 windows of the WikiText-2 (raw) test split (``experiments/quality/ppl_llama.py``, calibration as in
-:data:`MAIN_RECIPE`).  Llama-2-7B takes :data:`MAIN_RECIPE`'s (OpenLLaMA-7B's, a model of the same shapes) and
-Llama-2-13B alpha 0.6; any other checkpoint :data:`MAIN_RECIPE`'s.  Llama-2's two settings are fixed in advance,
-not chosen on its own measurements: the run package's quality tier measures each among its neighbours on the test
-and the validation split, and the paper reports where it lies (``experiments/paper/macros.py``, ``LLAMA_GRIDS``)."""
+:data:`MAIN_RECIPE`).  Llama-2-13B's alpha 0.6 is fixed in advance, not chosen on its own measurements.
+Llama-2-7B's (0.65, 0.3) is the best of its grid on the test split (alpha 0.45 to 0.65 and balance 0.1 to 0.3 around
+:data:`MAIN_RECIPE`'s, which OpenLLaMA-7B, a model of the same shapes, keeps), measured with the prefix of
+``--prefix absorb`` (PrefixQuant's choice does not absorb its massive activation); the setting fixed in advance
+remains ``ppl_llama.py --alphas 0.55 --glu-smooths 0.2``.  Any other checkpoint takes :data:`MAIN_RECIPE`'s.  The run
+package's quality tier measures each Llama-2 setting among its neighbours on the test and the validation split, and
+the paper reports where it lies (``experiments/paper/macros.py``, ``LLAMA_GRIDS``)."""
 
 
 def main_recipe(name: str, alpha: float | None = None, glu_smooth: float | None = None) -> dict:

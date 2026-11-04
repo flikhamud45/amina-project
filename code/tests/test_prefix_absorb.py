@@ -258,7 +258,7 @@ def test_the_paper_reads_one_prefix_rule():
             R.prefix_rule({"prefix_spec": "13,1"}), R.prefix_rule({"cell": "x"})) == ("auto", "none", "ids", None)
     assert R.ABSORB_MARGIN == rl.ABSORB_MARGIN
     tiny = _llama(tl, "main-a0.75-glus0.2", 1.10, "auto", 1, window=900.0, prefix=1000.0)       # absorbs (0.9)
-    seven = _llama(l7, "main-a0.55-glus0.2", 265.0, "auto", 2, window=2461.0, prefix=1130.0)    # does not (2.18)
+    seven = _llama(l7, "main-a0.65-glus0.3", 265.0, "auto", 2, window=2461.0, prefix=1130.0)    # does not (2.18)
     assert R.prefix_absorbs(tiny.d) and not R.prefix_absorbs(seven.d) and R.prefix_absorbs({"cell": "x"}) is None
     assert not R.prefix_absorbs(tiny.d, 1.2) and R.absorb_consistent(tiny.d) and not R.absorb_consistent(seven.d)
     v, problems = _macros([tiny, seven])
@@ -267,13 +267,13 @@ def test_the_paper_reads_one_prefix_rule():
     v, problems = _macros([tiny, seven], warned, llama_prefix="absorb")  # no cell of the rule: a warning only
     assert not problems and len(warned) == 1 and l7 in warned[0] and tl not in warned[0]
     # a cell of the rule next to a PrefixQuant cell of the same checkpoint that does not absorb fails
-    mixed = [tiny, seven, _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, split="validation", window=900.0,
+    mixed = [tiny, seven, _llama(l7, "main-a0.65-glus0.3", 1.08, "absorb", 3, split="validation", window=900.0,
                                  prefix=1500.0)]
     v, problems = _macros(mixed)
     assert len(problems) == 1 and problems[0].startswith(M.TEXT_CLAIM) and "does not absorb" in problems[0]
     assert l7 in problems[0] and tl not in problems[0]
     # Llama-2-7B measured again with the rule (a later job): read, and TinyLlama's absorbing cell agrees
-    again = [tiny, seven, _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, window=900.0, prefix=1500.0)]
+    again = [tiny, seven, _llama(l7, "main-a0.65-glus0.3", 1.08, "absorb", 3, window=900.0, prefix=1500.0)]
     v, problems = _macros(again)
     assert not problems and v["LlamaSevenRatio"] == "1.080"
     assert {k: len(x) for k, x in M.llama_prefix_rules(R.Run(again)).items()} == {"auto": 1, "absorb": 1}
@@ -283,11 +283,11 @@ def test_the_paper_reads_one_prefix_rule():
     v, problems = _macros(again, warned, absorb_margin=1.2)
     assert not problems and len(warned) == 1 and tl in warned[0] and "margin 1.2" in warned[0]
     warned = []
-    v, problems = _macros(again[:2] + [_llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, margin=1.2)], warned)
+    v, problems = _macros(again[:2] + [_llama(l7, "main-a0.65-glus0.3", 1.08, "absorb", 3, margin=1.2)], warned)
     assert not problems and len(warned) == 1 and tl in warned[0]
     # a later job of PrefixQuant's rule: read by default (every cell read is then PrefixQuant's), passed over with
     # llama_prefix="absorb"
-    late = again + [_llama(l7, "main-a0.55-glus0.2", 265.0, "auto", 5, window=2461.0, prefix=1130.0)]
+    late = again + [_llama(l7, "main-a0.65-glus0.3", 265.0, "auto", 5, window=2461.0, prefix=1130.0)]
     v, problems = _macros(late)
     assert v["LlamaSevenRatio"] == "265.000" and not problems
     v, problems = _macros(late, llama_prefix="absorb")
@@ -301,7 +301,7 @@ def test_the_rule_is_checked_per_checkpoint():
     absorb its massive activation within its longest prefix): the build passes, with a warning naming Qwen3-4B; a
     cell of the rule whose own search found no prefix that absorbs is a warning too."""
     l7, qw = "meta-llama/Llama-2-7b-hf", "Qwen/Qwen3-4B-Base"
-    seven = _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 3, window=900.0, prefix=1500.0)
+    seven = _llama(l7, "main-a0.65-glus0.3", 1.08, "absorb", 3, window=900.0, prefix=1500.0)
     seven.d["prefix_choice"]["absorbed"] = True
     qwen = _llama(qw, "main-a0.45-glus0.5", 1.05, "auto", 2, window=8803.0, prefix=2300.0)
     assert R.prefix_absorbs(qwen.d) is False
@@ -314,7 +314,7 @@ def test_the_rule_is_checked_per_checkpoint():
     v, problems = _macros([seven, qwen], warned, llama_prefix="absorb")
     assert not problems and len(warned) == 1 and qw in warned[0]
     # the rule's own search ended without a prefix that absorbs: still the rule's cell, with a warning
-    short = _llama(l7, "main-a0.55-glus0.2", 1.08, "absorb", 4, window=900.0, prefix=800.0)
+    short = _llama(l7, "main-a0.65-glus0.3", 1.08, "absorb", 4, window=900.0, prefix=800.0)
     short.d["prefix_choice"]["absorbed"] = False
     warned = []
     v, problems = _macros([short, qwen], warned)

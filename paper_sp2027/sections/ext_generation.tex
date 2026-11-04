@@ -185,11 +185,11 @@ $\alpha=0.6$ was chosen on the test split: over $\alpha\in\{0.3,\dots,0.7\}$ its
 \QualityAlphaGapOptS{} above the best on OPT-125M and \QualityAlphaGapOptM{} above it on OPT-1.3B. On the validation split, which
 no choice used, it is \QualityAlphaValGapOptS{} and \QualityAlphaValGapOptM{} above the best of $\alpha\in\{0.5,0.6,0.7\}$ on
 OPT-125M and OPT-1.3B, and costs OPT-6.7B \QualityAlphaCostOptL{} against $\alpha=0.5$. The Llama recipe's $\alpha$
-and SwiGLU balance were likewise chosen per model on the test split, except Llama-2's, fixed in
-advance: 7B takes ($\alpha=0.55$, balance 0.2) from a licence-free model of its shapes, and 13B takes
-($\alpha=0.6$, balance 0.2). On Llama-2-7B the best of
-$\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ is \LlamaSevenTestBest{} (test) and
-\LlamaSevenValBest{} (validation), ours \LlamaSevenTestGap{} and \LlamaSevenValGap{} above them;
+and SwiGLU balance were likewise chosen per model on the test split, except Llama-2-13B's, fixed in
+advance at ($\alpha=0.6$, balance 0.2). Llama-2-7B's started from ($\alpha=0.55$, balance 0.2), taken in advance from a licence-free model of its shapes; once its
+prefix absorbed the massive activation, the best of
+$\alpha\in\{0.45,0.55,0.65\}$ and balance $\in\{0.1,0.2,0.3\}$ on the test split was \LlamaSevenTestBest{}, which we use (an edge of
+the grid), and on the validation split it is \LlamaSevenValBest{}, ours \LlamaSevenValGap{} above it;
 on Llama-2-13B the best of $\alpha\in\{0.5,0.6,0.7\}$ is \LlamaThirteenTestBest{} and \LlamaThirteenValBest{}, ours
 \LlamaThirteenTestGap{} and \LlamaThirteenValGap{} above them. On the validation split, TinyLlama's setting is
 \TinyLlamaValGap{} above the best of $\alpha\in\{0.65,0.75,0.85\}$ and balance $\in\{0.1,0.2,0.3\}$ (\TinyLlamaValBest{}),

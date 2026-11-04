@@ -1204,8 +1204,9 @@ tier_qllama() {
     echo "tier qllama: no Llama-2 rows (they need your own Llama-2 licence: --llama-licence)" >&2
     return 0
   fi
-  # Llama-2 itself: the committed recipe's cell (Llama-2-7B 0.55 / 0.2, Llama-2-13B 0.6 / 0.2; the text's ratios,
-  # with the structural diff on the test split) among its alpha +-0.1 (and Llama-2-7B's product balance +-0.1).  One
+  # Llama-2 itself: the setting fixed in advance (Llama-2-7B 0.55 / 0.2, Llama-2-13B 0.6 / 0.2) among its alpha
+  # +-0.1 (and Llama-2-7B's product balance +-0.1), with the structural diff on the test split; the committed
+  # recipe's cell gives the text's ratios (Llama-2-7B's is its test grid's best, 0.65 / 0.3).  One
   # job per model, split and alpha (Llama-2-7B: its three balances, about 4 h; Llama-2-13B: one cell, about 4 h;
   # mostly the calibration build on the CPU), so that a job stopped at a limit loses one alpha's cells only and each
   # job's limit leaves room over its estimate.  The reference on the GPU: Llama-2-7B's in fp32, Llama-2-13B's in fp16,

@@ -475,15 +475,15 @@ def _logs(tmp: Path) -> Path:
         for v in ("ref", "int")])
     # Llama-2-7B against its fp32 checkpoint and Llama-2-13B against its fp16 copy, each committed recipe among its
     # grid on the test and the validation split: on Llama-2-7B alpha 0.45 with balance 0.3 is the best on both splits
-    # (the committed recipe 0.0025 and 0.0035 above it); on Llama-2-13B the committed alpha 0.6 is the best on the
+    # (the committed recipe, 0.65 / 0.3, 0.0025 and 0.0035 above it); on Llama-2-13B the committed alpha 0.6 is the best on the
     # test split, alpha 0.5 on the validation split (0.0012 below it); no validation cell fills a test-split macro
     l7, l13 = "meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"
-    test7 = {(0.55, 0.2): 1.0805, (0.45, 0.3): 1.078}
+    test7 = {(0.65, 0.3): 1.0805, (0.45, 0.3): 1.078}
     _write(logs, "sp-q-llama7-49.out", [llama_ppl(l7, "reference", 1.0)] + [
         llama_ppl(l7, f"main-a{a:g}-glus{g:g}", test7.get((a, g), 1.09), alpha=a, balance=g,
-                  ci=(1.0781, 1.0832) if (a, g) == (0.55, 0.2) else None)
+                  ci=(1.0781, 1.0832) if (a, g) == (0.65, 0.3) else None)
         for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)])
-    val7 = {(0.55, 0.2): 1.0735, (0.45, 0.3): 1.07}
+    val7 = {(0.65, 0.3): 1.0735, (0.45, 0.3): 1.07}
     _write(logs, "sp-q-llama7-validation-51.out", [llama_ppl(l7, "reference", 1.0, split="validation")] + [
         llama_ppl(l7, f"main-a{a:g}-glus{g:g}", val7.get((a, g), 1.08), alpha=a, balance=g, split="validation")
         for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)])
@@ -918,7 +918,7 @@ def test_the_llama_recipes_validation_grids_and_calibration_draws():
     draws = [llama_ppl(model, cell, r, alpha=a, balance=g, draw=d)
              for model, cell, a, g, rs in ((tl, "main-a0.75-glus0.2", 0.75, 0.2, (1.13, 1.1325, 1.129)),
                                            (q17, "main-a0.45-glus0.3", 0.45, 0.3, (1.40, 1.41, 1.395)),
-                                           (l7, "main-a0.55-glus0.2", 0.55, 0.2, (1.081, 1.0815, 1.0802)))
+                                           (l7, "main-a0.65-glus0.3", 0.65, 0.3, (1.081, 1.0815, 1.0802)))
              for d, r in enumerate(rs)]
     v, problems = _quality_run(*grids, *draws, draws[0])
     assert not problems
@@ -955,11 +955,11 @@ def test_the_texts_claims_on_the_llama_family_and_a_build_that_differs():
     either split, or a Llama-2-13B ratio against fp32, fails the text's claims (a rehearsal's warnings); two builds of
     one model that differ fail the build and name no setting, also in a rehearsal; one thread count names none."""
     l7, l13 = "meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"
-    grid = [llama_ppl(l7, f"main-a{a:g}-glus{g:g}", 1.07 if (a, g) in ((0.55, 0.2), (0.65, 0.1)) else 1.08, alpha=a,
+    grid = [llama_ppl(l7, f"main-a{a:g}-glus{g:g}", 1.07 if (a, g) in ((0.65, 0.3), (0.65, 0.1)) else 1.08, alpha=a,
                       balance=g, split="validation") for a in (0.45, 0.55, 0.65) for g in (0.1, 0.2, 0.3)]
     v, problems = _quality_run(*grid)
     assert not problems and v["LlamaSevenValGap"] == "0"
-    assert v["LlamaSevenValBest"] == r"$\alpha=0.55$ with balance 0.2"
+    assert v["LlamaSevenValBest"] == r"$\alpha=0.65$ with balance 0.3"
     assert v["LlamaSevenTestBest"] is None and v["LlamaSevenTestGap"] is None    # the test split's grid: not run
     v, problems = _quality_run(*grid[:8])                       # one cell missing: no best cell, and no false claim
     assert not problems and v["LlamaSevenValBest"] is None and v["LlamaSevenValGap"] is None
@@ -1014,7 +1014,8 @@ def test_two_records_of_one_quality_cell_that_differ_are_a_warning(run_dir, caps
 
 def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
     """Each Llama-family macro reads its checkpoint's main recipe (``hf_llama.MAIN_SETTINGS``), and each Llama-2 grid
-    is the committed recipe's alpha (and Llama-2-7B's balance) with their neighbours 0.1 away, as the text names it;
+    is the setting fixed in advance (alpha, and Llama-2-7B's balance) with its neighbours 0.1 away, as the text names
+    it, and holds the committed recipe (Llama-2-13B's the setting fixed in advance, Llama-2-7B's its test grid's best);
     no text names OpenLLaMA-7B, the licence-free stand-in the paper does not report."""
     from pvi.models import hf_llama
     for model, _, cell, _, _ in M.LLAMAS:
@@ -1022,18 +1023,20 @@ def test_the_llama_cells_are_the_main_recipes_and_the_grid_the_texts():
         assert cell == f"main-a{r['smooth']:g}-glus{r['glu_smooth']:g}", model
     body = (PAPER / "sections" / "quality.tex").read_text(encoding="utf-8")
     ext = (PAPER / "sections" / "ext_generation.tex").read_text(encoding="utf-8")
-    assert r"(test) and \LlamaSevenValGap{} (validation) of the best ratio" in body.replace("\n", " ")
-    assert r"of the best ratio for $\alpha$ and balance within $\pm0.1$" in body.replace("\n", " ")
-    # Llama-2-7B's setting is OpenLLaMA-7B's, chosen on the test split of that model of the same shapes: both texts
-    # say where it comes from (without naming the stand-in)
-    assert "values were fixed in advance (7B's on a model of the same shape)" in body.replace("\n", " ")
-    assert "7B takes ($\\alpha=0.55$, balance 0.2) from a licence-free model of its shapes" in ext.replace("\n", " ")
-    assert hf_llama.MAIN_SETTINGS["Llama-2-7b-hf"] == hf_llama.MAIN_SETTINGS["open_llama_7b_v2"]
+    flat, ext_flat = body.replace("\n", " "), ext.replace("\n", " ")
+    # Llama-2-7B's setting fixed in advance is OpenLLaMA-7B's, chosen on the test split of that model of the same
+    # shapes; its committed one the best of the grid around it: both texts say so (without naming the stand-in)
+    assert "except for Llama-2-13B, whose values were fixed in advance" in flat
+    assert "7B's started from ($\\alpha=0.55$, balance 0.2), taken in advance from a licence-free model" in ext_flat
+    assert r"\LlamaSevenTestBest{}, which we use" in ext_flat
+    assert hf_llama.MAIN_SETTINGS["Llama-2-7b-hf"] == (0.65, 0.3) and hf_llama.MAIN_SETTINGS["open_llama_7b_v2"] == \
+        (0.55, 0.2) == (hf_llama.MAIN_RECIPE["smooth"], hf_llama.MAIN_RECIPE["glu_smooth"])
     assert [m for m, _, _, _ in M.LLAMA_GRIDS] == ["meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-13b-hf"]
     for model, name, alphas, balances in M.LLAMA_GRIDS:
         r = hf_llama.main_recipe(model)
         centre = (alphas[len(alphas) // 2], balances[len(balances) // 2])
-        assert centre == (r["smooth"], r["glu_smooth"]), model
+        assert r["smooth"] in alphas and r["glu_smooth"] in balances, model
+        assert centre == ((0.55, 0.2) if "7b" in model else (r["smooth"], r["glu_smooth"])), model
         assert [round(b - a, 9) for x in (alphas, balances) for a, b in zip(x, x[1:])] == \
             [0.1] * (len(alphas) + len(balances) - 2)
         grid = rf"$\alpha\in\{{{','.join(f'{a:g}' for a in alphas)}\}}$"

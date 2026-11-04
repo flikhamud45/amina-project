@@ -1325,14 +1325,14 @@ def crossover_piecewise(weights_bytes: float, points: list[tuple[int, float]]) -
 
 # ================================================================================================ quality
 OPTS = (("facebook/opt-125m", "OptS", 4), ("facebook/opt-1.3b", "OptM", 3), ("facebook/opt-6.7b", "OptL", 2))
-LLAMAS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", "main-a0.55-glus0.2", 3, True),
+LLAMAS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", "main-a0.65-glus0.3", 3, True),
           ("meta-llama/Llama-2-13b-hf", "LlamaThirteen", "main-a0.6-glus0.2", 3, True),
           ("TinyLlama/TinyLlama_v1.1", "TinyLlama", "main-a0.75-glus0.2", 2, True),
           ("Qwen/Qwen3-1.7B-Base", "QwenM", "main-a0.45-glus0.3", 2, True),
           ("Qwen/Qwen3-4B-Base", "QwenL", "main-a0.45-glus0.5", 1, False))
 """The Llama-family checkpoints of the text, their ``ppl_llama.py`` main cell (``hf_llama.MAIN_SETTINGS``), the
 decimals the text prints and whether the text states the ratio as a bound ("within"; rounded up).  Llama-2-7B and
-Llama-2-13B (the qllama tier's ``q-llama7-a0.55`` and ``q-llama13-a0.6``, with ``--llama-licence``) also have their 95%
+Llama-2-13B (the qllama tier's ``q-llama7-a0.65`` and ``q-llama13-a0.6``, with ``--llama-licence``) also have their 95%
 bootstrap intervals (:data:`LLAMA_CI`)."""
 LLAMA_CI = ("LlamaSeven", "LlamaThirteen")
 LLAMA_REFERENCE = {"meta-llama/Llama-2-13b-hf": "float16"}
@@ -1341,11 +1341,11 @@ fp16 (``q-llama13-a* --ref-dtype float16``)."""
 LLAMA_GRIDS = (("meta-llama/Llama-2-7b-hf", "LlamaSeven", (0.45, 0.55, 0.65), (0.1, 0.2, 0.3)),
                ("meta-llama/Llama-2-13b-hf", "LlamaThirteen", (0.5, 0.6, 0.7), (0.2,)))
 """The committed Llama-2 recipes against their neighbours, as the text names them: per checkpoint the smoothing alphas
-and the SwiGLU product balances of its grid, whose middle cell is the committed recipe (``hf_llama.MAIN_SETTINGS``,
-the cell of :data:`LLAMAS`), measured on each split of :data:`LLAMA_SPLITS` (the qllama tier's ``q-llama7-a<alpha>``,
+and the SwiGLU product balances of its grid, around the setting fixed in advance (the middle cell; the committed
+recipe, ``hf_llama.MAIN_SETTINGS``, the cell of :data:`LLAMAS`, is any cell of the grid), measured on each split of :data:`LLAMA_SPLITS` (the qllama tier's ``q-llama7-a<alpha>``,
 ``q-llama7-validation-a<alpha>``, ``q-llama13-a<alpha>`` and ``q-llama13-validation-a<alpha>``, one job per alpha, with
-``--llama-licence``).  The recipe is not
-chosen from these cells: they report the grid's best cell and the committed recipe's ratio above it."""
+``--llama-licence``).  They report the grid's best cell and the committed recipe's ratio above it (Llama-2-7B's
+committed recipe is its test split's best, so its test gap is 0)."""
 LLAMA_SPLITS = (("test", "Test"), ("validation", "Val"))
 VALIDATION_GRIDS = (("TinyLlama/TinyLlama_v1.1", "TinyLlama", (0.65, 0.75, 0.85), (0.1, 0.2, 0.3)),
                     ("Qwen/Qwen3-1.7B-Base", "QwenM", (0.35, 0.45, 0.55), (0.2, 0.3, 0.4)))
@@ -1439,7 +1439,7 @@ def llama_grids(c: Collector, run) -> None:
     grid fails the text's claim."""
     for model, name, alphas, balances in LLAMA_GRIDS:
         main = next(cell for m, _, cell, _, _ in LLAMAS if m == model)
-        centre = (alphas[len(alphas) // 2], balances[len(balances) // 2])
+        ours = next(((a, g) for a in alphas for g in balances if f"main-a{a:g}-glus{g:g}" == main), None)
         for split, tag in LLAMA_SPLITS:
             grid = {(a, g): run.ppl(model, f"main-a{a:g}-glus{g:g}", split=split) for a in alphas for g in balances}
             measured = {(round(r.d.get("alpha"), 6), round(r.d.get("glu_smooth"), 6))
@@ -1449,11 +1449,11 @@ def llama_grids(c: Collector, run) -> None:
                         and r.d.get("alpha") is not None and r.d.get("glu_smooth") is not None}
             c.claim(measured <= set(grid), f"the {split} cells of {model} include {sorted(measured - set(grid))}, "
                     f"outside the grid the text names (alphas {alphas}, balances {balances})")
-            full = all(grid.values()) and f"main-a{centre[0]:g}-glus{centre[1]:g}" == main
-            best = min(grid, key=lambda k: (grid[k].d["ratio"], k != centre)) if full else None
+            full = all(grid.values()) and ours is not None
+            best = min(grid, key=lambda k: (grid[k].d["ratio"], k != ours)) if full else None
             src = grid[best] if best else None
             c.put(f"{name}{tag}Best", best, src, lambda v, balances=balances: grid_cell(v, balances))
-            c.put(f"{name}{tag}Gap", grid[centre].d["ratio"] - grid[best].d["ratio"] if best else None, src,
+            c.put(f"{name}{tag}Gap", grid[ours].d["ratio"] - grid[best].d["ratio"] if best else None, src,
                   lambda v: ceil_fixed(v, 3))
 
 

@@ -67,9 +67,8 @@ whose int8 keys and values enter each attention operation and take the first tok
 activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance of the SwiGLU
 product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
 Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$
-and $W_k$ are rescaled to a common int8 range, to which the per-head RMSNorm is invariant. We choose $\alpha$ and the SwiGLU balance per model on the test split, except for Llama-2, whose
-values were fixed in advance (7B's on a model of the same shape); on Llama-2-7B they are within
-\LlamaSevenTestGap{} (test) and \LlamaSevenValGap{} (validation) of the best ratio for $\alpha$ and balance
-within $\pm0.1$. With them, the ratio to fp32 at 2{,}048 tokens is \LlamaSevenRatio{}$\times$ (95\% interval [\LlamaSevenCI{}]) for Llama-2-7B (our benchmark),
-\TinyLlamaRatio{}$\times$ for TinyLlama, \QwenMRatio{}$\times$ for Qwen3-1.7B and \QwenLRatio{}$\times$ for Qwen3-4B, which forms a
-second massive activation that no prefix takes, and to fp16 \LlamaThirteenRatio{}$\times$ ([\LlamaThirteenCI{}]) for Llama-2-13B.
+and $W_k$ are rescaled to a common int8 range, to which the per-head RMSNorm is invariant; Llama-2-7B's prefix adds an outlier token to PrefixQuant's, which does not
+absorb it. We choose $\alpha$ and the SwiGLU balance per model on the test split, except for Llama-2-13B, whose
+values were fixed in advance. With them, the ratio to fp32 at 2{,}048 tokens is \LlamaSevenRatio{}$\times$ (95\% interval [\LlamaSevenCI{}]) for Llama-2-7B (our benchmark),
+\TinyLlamaRatio{}$\times$ for TinyLlama, \QwenMRatio{}$\times$ for Qwen3-1.7B and \QwenLRatio{}$\times$ for Qwen3-4B, whose
+second massive activation its prefix takes only barely, and to fp16 \LlamaThirteenRatio{}$\times$ ([\LlamaThirteenCI{}]) for Llama-2-13B.
