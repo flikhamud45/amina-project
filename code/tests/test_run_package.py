@@ -1403,3 +1403,22 @@ def test_the_llama_prefix_rule_runs_the_llama_family_cells_again():
     text = (REPO / RUN).read_text()
     for tier in ("prefixcheck", "qprefix"):
         assert f"tier_{tier}()" in text and re.search(rf"^#\s+{tier}\s+\[not in 'all'\]", text, re.M), tier
+
+
+def test_the_qdiag_tier_diagnoses_llama7_with_the_prefix_rule():
+    """The qdiag tier is one CPU job outside 'all': llama_diag.py on Llama-2-7B at 128 tokens (three recipes) and
+    at 2,048, on Llama-2-13B at 2,048, and llama_attrib.py over every block at 2,048, each with --llama-prefix's
+    rule; without --llama-licence the same on OpenLLaMA-7B and TinyLlama."""
+    auto = _dry(tiers=("qdiag",))
+    assert len(auto) == 1 and _job(auto[0]) == "sp-q-llama7-diag" and "--prefix" not in auto[0]
+    for part in ("quality.llama_diag --threads 8 --model meta-llama/Llama-2-7b-hf --recipes main smooth55 scalar4",
+                 "quality.llama_diag --threads 8 --model meta-llama/Llama-2-7b-hf --seq 2048 --recipes main",
+                 "quality.llama_diag --threads 8 --model meta-llama/Llama-2-13b-hf --seq 2048 --recipes main",
+                 "quality.llama_attrib --threads 8 --model meta-llama/Llama-2-7b-hf --seq 2048 --blocks all"):
+        assert part in auto[0], part
+    absorb = _dry("--llama-prefix", "absorb", tiers=("qdiag",))
+    assert len(absorb) == 1 and _job(absorb[0]) == "sp-q-llama7-diag-absorb"
+    assert absorb[0].count("--prefix absorb --absorb-margin 1 --absorb-max-len 6") == 4
+    assert "sp-q-llama7-diag" not in {_job(x) for x in _dry()}
+    text = (REPO / RUN).read_text()
+    assert "tier_qdiag()" in text and re.search(r"^#\s+qdiag\s+\[not in 'all'\]", text, re.M)

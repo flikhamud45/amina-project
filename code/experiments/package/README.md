@@ -351,6 +351,21 @@ Both `--one-job` commands name their allocation after the tier (`sp-node-qprefix
 the first is queued or running, is skipped as `already queued`; submit it after the first ends. One `--jobs` list of
 all eight jobs would run them in one allocation, which `--max-hours` (default 24) cuts short of their 47 h of limits.
 
+A third tier outside `all`, `qdiag`, says where Llama-2-7B's integer graph leaves the fp32 checkpoint when its quality
+is far from fp32's even with a prefix that absorbs:
+
+```bash
+$R --llama-prefix absorb --one-job --no-exclusive qdiag   # one CPU job, 10 h limit (about 4 to 8 h)
+#  -> logs/final/llama_diag.jsonl, llama_attrib.jsonl
+```
+
+It runs `experiments/quality/llama_diag.py` (the cosine of the integer residual stream to the checkpoint's per block
+boundary, its clipping and the fp stream's largest values) on one test window of 128 tokens with the main, `smooth55`
+and `scalar4` recipes and of 2,048 tokens with the main recipe (the quality jobs' length, so their calibration and
+prefix), the same at 2,048 tokens on Llama-2-13B as a graph that keeps close, and `experiments/quality/llama_attrib.py`
+(each op's own error and the error its inputs bring) over every block at 2,048 tokens, all with `--llama-prefix`'s
+rule. Without `--llama-licence` it diagnoses OpenLLaMA-7B beside TinyLlama.
+
 ## 5. While it runs
 
 The real-weight cells name their refusals before anything is loaded or timed (`--real: ...` on the job's log, exit

@@ -58,6 +58,11 @@
 #     qprefix  [not in 'all'] the Llama-family quality jobs alone, with --llama-prefix's rule: the quality tier's
 #              TinyLlama and Qwen3 cells and the whole qllama and qcheck tiers (not the OPT jobs), so that every
 #              Llama-family number of the text can be measured again with another prefix rule
+#     qdiag    [not in 'all'] where Llama-2-7B's integer graph leaves the fp32 checkpoint (OpenLLaMA-7B without
+#              --llama-licence), with --llama-prefix's rule, on the CPU (one job of about 4 to 8 hours):
+#              experiments/quality/llama_diag.py per block boundary on one test window of 128 and of 2,048 tokens,
+#              Llama-2-13B (TinyLlama) at 2,048 tokens beside it, and experiments/quality/llama_attrib.py per op of
+#              every block at 2,048 tokens (records: logs/<name>/llama_diag.jsonl, llama_attrib.jsonl)
 #     gate     [not in 'all'] the full-size checks, run once on the final platform before the run (after the smoke;
 #              about 1.5 to 3 hours; no --rehearsal): V1's GKR instances of 2^27 leaves on the GPU prover with both CPU
 #              verifiers and the GPU verifier (two Llama-2-7B blocks at 2,048 tokens), OPT-1.3B at 2,048 tokens
@@ -474,6 +479,7 @@ est() {   # a tier's expected hours on an L40S node (measured times of the same 
     quality) echo 16-24 ;; qllama) if [ -n "$LLAMA" ]; then echo 40-48; else echo 10-14; fi ;;
     qcheck) echo 9-13 ;;
     prefixcheck) echo 0.3-1 ;; qprefix) if [ -n "$LLAMA" ]; then echo 54-70; else echo 24-36; fi ;;
+    qdiag) echo 4-8 ;;
     tv) echo 2-3 ;; attack) echo 7-9 ;; long) echo 11-18 ;; gate) echo 1.5-3 ;;
     zkllm) echo 6-9 ;;
   esac
@@ -1275,6 +1281,27 @@ tier_qprefix() {
   tier_qcheck
 }
 
+tier_qdiag() {
+  # [not in 'all'] where Llama-2-7B's integer graph (OpenLLaMA-7B's without --llama-licence) leaves the fp32
+  # checkpoint, with --llama-prefix's rule and the main recipe: llama_diag.py per block boundary on one test window of
+  # 128 tokens (also the smooth55 and scalar4 recipes) and of 2,048 tokens (the quality jobs' length, so the same
+  # calibration and prefix), Llama-2-13B's (TinyLlama's) at 2,048 tokens as a graph that keeps close, then
+  # llama_attrib.py per op of every block at 2,048 tokens.  The CPU only; records: logs/<name>/llama_diag.jsonl and
+  # llama_attrib.jsonl.  The rehearsal: a smoke model of TinyLlama's vocabulary
+  local D="$M.quality.llama_diag --threads 8" A="$M.quality.llama_attrib --threads 8" o="$ROOT/$LOGS"
+  local m=meta-llama/Llama-2-7b-hf c=meta-llama/Llama-2-13b-hf
+  if [ -n "$REH" ]; then
+    sub q-diag 1 32 "$D --model TinyLlama/TinyLlama_v1.1 --smoke && \
+$A --model TinyLlama/TinyLlama_v1.1 --smoke --blocks all"
+    return 0
+  fi
+  [ -n "$LLAMA" ] || m=openlm-research/open_llama_7b_v2 c=TinyLlama/TinyLlama_v1.1
+  sub "q-llama7-diag$LS" 10 192 "$D --model $m$LP --recipes main smooth55 scalar4 --out $o/llama_diag.jsonl && \
+$D --model $m$LP --seq 2048 --recipes main --out $o/llama_diag.jsonl && \
+$D --model $c$LP --seq 2048 --recipes main --out $o/llama_diag.jsonl && \
+$A --model $m$LP --seq 2048 --blocks all --recipe main --out $o/llama_attrib.jsonl"
+}
+
 tier_tv() {
   # the token sampler's total-variation distance to the softmax on the certified OPT-1.3B (CPU, 8 workers: the 8 CPUs
   # each job and allocation asks for), and the sampler's closed-form and Monte Carlo checks (the Monte Carlo of
@@ -1490,7 +1517,7 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
   local bad=() t hf="" spm="" big gb=60 v d
   [ -z "$LLAMA" ] || gb=100                     # the Llama-2 checkpoints add 40 GB
   for t in "${TIERS[@]}"; do
-    case "$t" in real|quality|qllama|qcheck|qprefix|prefixcheck|tv|attack|gate) hf=1 ;;
+    case "$t" in real|quality|qllama|qcheck|qprefix|prefixcheck|qdiag|tv|attack|gate) hf=1 ;;
       zkllm) [ -z "$LLAMA" ] || hf=1 ;;
     esac
     # the cost tiers' real-weight cells (rw): OPT-125M, OPT-1.3B and OPT-6.7B (about 16 GB), Qwen3-4B (8 GB) and,
@@ -1498,6 +1525,7 @@ preflight() {   # what the jobs need from this host and the scheduler, checked b
     case "$t" in cpuv|cpux|v1|serve|bench|gpuv|gen|batch|setup|improve) [ -n "$RANDOMW" ] || hf=1 ;; esac
     [ "$t" != qllama ] || [ -n "$LLAMA" ] || spm=1       # OpenLLaMA-7B's jobs run only without --llama-licence
     [ "$t" != qprefix ] || [ -n "$LLAMA" ] || spm=1      # (the qllama and qcheck tiers' jobs among its own)
+    [ "$t" != qdiag ] || [ -n "$LLAMA" ] || spm=1        # (OpenLLaMA-7B's diagnosis)
     [ "$t" != qcheck ] || [ -n "$LLAMA$REH" ] || spm=1  # (the qcheck tier's rehearsal: TinyLlama's tokenizer)
   done
   [ -z "$hf" ] || [ -n "${HF_HOME:-}" ] || bad+=("export HF_HOME=<folder the nodes see, ~$gb \
@@ -1713,7 +1741,7 @@ h${JOBSEL:+ for the whole tier}"
 MUST="smoke cpuv cpux v1 serve bench gpuv gen batch real setup improve quality qllama qcheck tv attack"
 if [ "${TIERS[0]}" = all ]; then TIERS=($MUST ${OPTIONAL:+long zkllm}); fi
 for tier in "${TIERS[@]}"; do
-  case " $MUST long zkllm gate prefixcheck qprefix " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
+  case " $MUST long zkllm gate prefixcheck qprefix qdiag " in *" $tier "*) ;; *) echo "unknown tier $tier" >&2; usage ;; esac
   # (the gate tier is never in 'all', and its cells are full size only)
   [ "$tier" != gate ] || [ -z "$REH" ] || { echo "the gate tier checks the full sizes: run it without --rehearsal" \
 >&2; exit 2; }
