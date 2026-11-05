@@ -1581,6 +1581,11 @@ def test_the_fallback_tables_agree_with_their_macros():
     broken = dict(tables, tab_options=tables["tab_options"].replace(r"& 142\,s &", r"& 93\,s &"))
     assert [x for x in N.same_value(broken, macros) if "CpuReexecLong" in x]
     assert len(N.same_value(tables, dict(macros, CpuVerifyLong="18.5"))) == 3   # tab:options, :eval-reexec, :eval-cpu
+    # tab:eval-cpu's 8-thread row uses glibc's allocator defaults alone: its ratio is CpuRatioThrEight's, never
+    # CpuRatio's, which may take the re-execution with the verifier's allocator setting
+    tuned = dict(macros, CpuReexecLong="120", CpuRatio="6.1")
+    assert [x for x in N.same_value(tables, tuned) if "tab_eval_cpu" in x] == []
+    assert [x for x in N.same_value(tables, dict(tuned, CpuRatioThrEight="6.1")) if "tab_eval_cpu" in x]
     assert N.two_jobs(tables, macros) == []
     assert N.two_jobs(tables, dict(macros, VOneVZeroVerifyLlama="25.0"))
     # V1's verifier in tab:eval-v1 against tab:options' "with V1" row: compared only on a full-model build (the

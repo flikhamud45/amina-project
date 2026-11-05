@@ -321,8 +321,9 @@ SAME_VALUE = (
     ("tab_eval_reexec", "CPU", (r"our $\Kpre$ verifier",), 2, None, 0, 1, "CpuVerifyMedium", 1),
     ("tab_eval_reexec", "CPU", ("integer re-execution",), 2, None, 0, 1, "CpuReexecMedium", 1),
     ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 2, None, 0, 1, "CpuVerifyLong", 1),
-    ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 3, None, 0, 1, "CpuReexecLong", 1),
-    ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 4, None, 0, 1, "CpuRatio", 1),
+    # its re-execution and ratio use glibc's allocator defaults alone (tables.cpu_point), CpuReexecLong and CpuRatio
+    # the faster of both settings: the ratio is CpuRatioThrEight's, and no macro prints its re-execution
+    ("tab_eval_cpu", None, ("Llama-2-7B", "8 threads"), 4, None, 0, 1, "CpuRatioThrEight", 1),
     ("tab_eval_reexec", "CPU", ("fp32 re-execution",), 1, None, 0, 1, "CpuFloatShort", 1),
     ("tab_eval_reexec", "CPU", ("fp32 re-execution",), 3, None, 0, 1, "CpuFloatLong", 1),
     ("tab_eval_reexec", "CPU", ("integer re-execution",), 1, None, 0, 1, "CpuReexecShort", 1),
