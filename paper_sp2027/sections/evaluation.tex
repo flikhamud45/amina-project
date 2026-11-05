@@ -43,7 +43,8 @@ check \FinalNColumnsMerkle{} and the range check \FinalNRange{}\TodoCounts{}.
 
 \begin{table*}[t]
   \caption{Proving and verifying one prompt take under a second at 64 tokens and seconds at
-  2{,}048, but the proof grows with the prompt.}
+  2{,}048, but the proof grows with the prompt. Prover and verifier times and proof sizes per model and
+  prompt length, with committed weights ($\sC$) and with the verifier's key ($\Kpre$).}
   \label{tab:eval-llm}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -92,7 +93,8 @@ cells keep the GKR's layers in bounded memory; neither mode changes a byte.
 \label{sec:eval-v1}
 
 \begin{table}[t]
-  \caption{V1 roughly halves the proof from 512 tokens on, but slows the prover.}
+  \caption{V1 roughly halves the proof from 512 tokens on, but slows the prover. Proof sizes and
+  times of v0 and V1 on the same queries, by prompt length.}
   \label{tab:eval-v1}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.3pt}
@@ -134,10 +136,11 @@ queries\TodoVOneTimings{}.
 
 \begin{table}[t]
   \caption{On a CPU, a client without the weights verifies in about the time that exact
-  re-execution takes with them, but receives a proof that grows with the prompt.}
+  re-execution takes with them, but receives a proof that grows with the prompt. Ways to check a
+  Llama-2-7B answer: what the client holds, the bytes it receives, its time and the guarantee.}
   \label{tab:options}
   \centering\footnotesize
-  \setlength{\tabcolsep}{2.2pt}
+  \setlength{\tabcolsep}{1.5pt}
   \begin{tabular}{@{}llrrrrl@{}}
     \toprule
     & & \multicolumn{2}{c}{bytes per query} & \multicolumn{2}{c}{client time} & \\
@@ -169,7 +172,8 @@ queries\TodoVOneTimings{}.
   \centering
   \includegraphics[width=\columnwidth]{figures/ev_breakeven.pdf}
   \caption{Proofs cost a Llama-2-7B client fewer bytes than the weights only up to a number of
-  queries (left), and less time than CPU re-execution only on fast links (right).}
+  queries (left), and less time than CPU re-execution only on fast links (right). The client's total
+  bytes by number of queries, and its time by link speed.}
   \label{fig:breakeven}
 \end{figure}
 
@@ -201,7 +205,8 @@ that checks a provider without holding the weights.
 
 \begin{table*}[t]
   \caption{Our prover is faster than every system compared, by \CompareProverMin{}$\times$ or more
-  against the zkSNARKs, but our proofs are mostly larger.}
+  against the zkSNARKs, but our proofs are mostly larger. Prover and verifier times and proof sizes of
+  published systems, as they report them, against ours on the same model and prompt length.}
   \label{tab:eval-compare}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.5pt}

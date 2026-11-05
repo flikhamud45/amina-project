@@ -233,8 +233,9 @@ reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens, int
 \end{table}
 
 \begin{table}[t]
-  \caption{Long prompts on the \PlatformGpu{}: the full Llama-2-7B extrapolated from builds of 2 and
-  3 blocks (random weights). The streaming GPU verifier ($\Kpre$) against re-execution on the same GPU
+  \caption{On a GPU, exact re-execution with the weights stays faster than our streaming verifier
+  at every prompt length. Long prompts on the \PlatformGpu{}: the full Llama-2-7B extrapolated from
+  builds of 2 and 3 blocks (random weights). The streaming GPU verifier ($\Kpre$) against re-execution on the same GPU
   (exact with int8 GEMMs, and fp16), and the peak GPU memory of the 3-block process that proves and
   verifies}
   \label{tab:eval-long-gpu}
