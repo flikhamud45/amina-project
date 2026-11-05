@@ -130,12 +130,13 @@ unchanged; without the option no job names the rule; `prefixcheck` is one fp job
 `--jobs` selects one checkpoint's jobs and stops on an unknown name; invalid rules, margins and lengths stop the
 submission. `tests/test_real_llama.py` gives its hand-built `ppl_llama.py` arguments the two new options (39ee815).
 
-## 7. What remains
+## 7. Result in the final run
 
-* Run `prefixcheck` on the final platform and confirm that the rule's prefix for Llama-2-7B absorbs and differs from
-  PrefixQuant's; likewise for Qwen3-4B.
-* If so, re-run Llama-2-7B's seven quality jobs (and Qwen3-4B's one) with `--llama-prefix absorb`, and read the paper's
-  numbers with `numbers.py --llama-prefix absorb`. `FIXES3.md` in `docs/submission` (the handoff for commit 39ee815)
-  describes these steps.
-* If no candidate of at most six tokens absorbs for Llama-2-7B, the integer Llama-2-7B's quality remains a stated
-  limitation.
+* `prefixcheck` ran on the final platform: the rule's prefix for Llama-2-7B absorbs and adds one outlier token to
+  PrefixQuant's; Qwen3-4B's two-token prefix absorbs its second massive activation only barely.
+* Llama-2-7B's quality jobs and Qwen3-4B's one were re-run with `--llama-prefix absorb`. The collapse is gone:
+  Llama-2-7B's perplexity on the test split fell from about 1,450 to between 21.6 and 40.8 over the nine settings
+  (fp32: 5.47), and Qwen3-4B's from 42.3 to 38.7. `numbers.py` reads the absorbing records and warns about the
+  superseded ones.
+* Llama-2-7B remains about four times fp32's perplexity at its best setting. Its committed setting and the diagnosis
+  of the remaining gap are in [LQ_llama7_quality.md](LQ_llama7_quality.md).
