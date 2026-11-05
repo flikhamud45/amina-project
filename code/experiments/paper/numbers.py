@@ -595,11 +595,13 @@ def build(args) -> int:
                 absorb_margin=args.absorb_margin)
     licence, random_weights = run.licence, run.random_weights
     failed = [f"CHECK FAILED {Path(r.path).name}:{r.line}: {msg}" for r in recs for msg in R.checks(r)]
-    failed += R.log_checks(logs) if logs.is_dir() else []
+    logged = R.log_checks(logs) if logs.is_dir() else []
+    failed += [x for x in logged if x.startswith("CHECK FAILED")]
     failed += R.cross_checks(run)
     tables_dir = Path(args.bench) / f"tables_{args.platform}"
     bench = Bench(tables_dir if tables_dir.is_dir() else None, prob_max=args.prob_max, weights=run.weights)
     policy, warnings = choose_plan(args.policy, record_plans(run, bench))
+    warnings += [x for x in logged if not x.startswith("CHECK FAILED")]   # failed jobs rerun since
     bench.policy = policy
     machine_failed, machine_summary = machine_check(run, bench, logs)
     failed += machine_failed

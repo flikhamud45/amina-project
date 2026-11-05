@@ -357,21 +357,41 @@ def cross_checks(run: "Run") -> list[str]:
 
 def log_checks(logs: Path) -> list[str]:
     """The verdicts written as text in the job logs: the smoke's ``SMOKE OK`` and int8 self-check, and the
-    ``FAILED`` lines of the scripts (``FAILED: ...``, ``A CORRECTNESS CHECK FAILED``)."""
-    out = []
+    ``FAILED`` lines of the scripts (``FAILED: ...``, ``A CORRECTNESS CHECK FAILED``).  A log with such a verdict
+    whose cell a later job of the run reran without one (a larger job id: ``run.sh`` names each log by the time it
+    started, in nanoseconds) gives ``WARNING`` lines instead, as the run package reruns a failed job and keeps every
+    log."""
+    found: dict[Path, list[str]] = {}
     for path in sorted(logs.glob("sp-*.out")):
         text = path.read_text(encoding="utf-8", errors="replace")
         m = LOG.match(path.name)
         cell = m["cell"] if m else path.stem
+        out = found.setdefault(path, [])
         if cell == "smoke":
             if "SMOKE OK" not in text:
-                out.append(f"CHECK FAILED {path.name}: the smoke did not end in SMOKE OK")
+                out.append(f"{path.name}: the smoke did not end in SMOKE OK")
             if "int8 GEMMs exact on this GPU: False" in text:
-                out.append(f"CHECK FAILED {path.name}: int8 GEMMs are not exact on this GPU")
+                out.append(f"{path.name}: int8 GEMMs are not exact on this GPU")
         for i, line in enumerate(text.splitlines(), 1):
             if line.startswith("FAILED:") or "A CORRECTNESS CHECK FAILED" in line:
-                out.append(f"CHECK FAILED {path.name}:{i}: {line.strip()[:160]}")
-    return out
+                out.append(f"{path.name}:{i}: {line.strip()[:160]}")
+
+    def key(path):
+        m = LOG.match(path.name)
+        return (m["cell"], int(m["job"])) if m and m["job"].isdigit() else None
+
+    clean = {}                                              # each cell's latest job whose log has no failed verdict
+    for path, bad in found.items():
+        k = key(path)
+        if k and not bad:
+            clean[k[0]] = max(clean.get(k[0], -1), k[1])
+    lines = []
+    for path, bad in found.items():
+        k = key(path)
+        later = k is not None and clean.get(k[0], -1) > k[1]
+        lines += [f"WARNING {x} (a later job of the cell ended without it)" if later else f"CHECK FAILED {x}"
+                  for x in bad]
+    return lines
 
 
 NODE = re.compile(r"^node: (\{.*\})\s*$")

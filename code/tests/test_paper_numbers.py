@@ -1401,6 +1401,23 @@ def test_a_failed_check_or_an_unparsable_line_fails(run_dir, capsys):
     assert "did not end in SMOKE OK" in capsys.readouterr().out
 
 
+def test_a_failed_job_that_a_later_job_reran_only_warns(tmp_path):
+    """A script's FAILED line fails the run unless a later job of the same cell (a larger job id) ended without one:
+    the run package reruns a failed job and keeps both logs.  An earlier clean job does not excuse a later failure."""
+    logs = tmp_path / "logs"
+    _write(logs, "sp-c-llamacpp-llama2-7b-100.out", [], extra="FAILED: llama.cpp vocabulary: no module\n")
+    assert R.log_checks(logs) == ["CHECK FAILED sp-c-llamacpp-llama2-7b-100.out:2: FAILED: llama.cpp vocabulary: "
+                                  "no module"]
+    _write(logs, "sp-c-llamacpp-llama2-7b-200.out", [])
+    got = R.log_checks(logs)
+    assert len(got) == 1 and got[0].startswith("WARNING sp-c-llamacpp-llama2-7b-100.out:2") and "later job" in got[0]
+    _write(logs, "sp-c-llamacpp-llama2-7b-300.out", [], extra="FAILED: again\n")
+    _write(logs, "sp-c-llamacpp-llama2-7b-L1-400.out", [])          # another cell excuses nothing
+    got = R.log_checks(logs)
+    assert [x.split(":")[0] for x in got] == ["WARNING sp-c-llamacpp-llama2-7b-100.out",
+                                              "CHECK FAILED sp-c-llamacpp-llama2-7b-300.out"]
+
+
 def _node(host: str, gpu: str | None = "NVIDIA L40S", cpu: str = ENV["cpu"], driver: str = "535.183.01") -> str:
     """The node line ``experiments/package/node.py`` writes at the start of a job's log."""
     return "node: " + json.dumps({"host": host, "gpu": gpu, "gpu_count": 1 if gpu else 0, "driver": driver,
