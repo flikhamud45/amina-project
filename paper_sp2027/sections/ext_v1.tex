@@ -104,11 +104,7 @@ Table~\ref{tab:eval-v1} gives the proof sizes of V1 and v0 on the same queries, 
 Table~\ref{tab:v1} adds the share of V1's prover time spent in the GKR.
 
 \begin{table}[t]
-  \caption{V1's prover and CPU verifier are slower than v0's; the GKR takes a large share of V1's
-  prover time. Seconds on the same queries, with the builds and weights of
-  Table~\ref{tab:eval-v1}, which gives the proof sizes; Fiat--Shamir, $\lambda{=}128$; GKR instances of at most
-  $2^{\ParamsLmax{}}$ leaves; prover on one \PlatformGpu{}, verifier on 8 threads of an
-  \PlatformCpu{}; medians}
+  \caption{V1's and v0's prover and verifier times---V1 is slower in both, and the GKR takes a large share of its prover time. Medians in seconds on the same queries, builds and weights as Table~\ref{tab:eval-v1}; Fiat--Shamir, $\lambda{=}128$; GKR instances of at most $2^{\ParamsLmax{}}$ leaves; prover on one \PlatformGpu{}, verifier on 8 threads of an \PlatformCpu{}}
   \label{tab:v1}
   \centering
   \footnotesize

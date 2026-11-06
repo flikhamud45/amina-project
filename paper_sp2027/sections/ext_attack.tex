@@ -154,8 +154,7 @@ Proof-of-Learning~\cite{fang2023pol}. TOPLOC and SVIP target model substitution,
 answer with honestly recomputed fingerprints lies outside what they claim.
 
 \begin{table*}[t]
-  \caption{Each acceptance probability of Table~\ref{tab:sok} follows from the scheme's own
-  formula and parameters}
+  \caption{Derivation of the acceptance probabilities of Table~\ref{tab:sok}---each follows from the scheme's own formula and parameters}
   \label{tab:sok-derivation}
   \footnotesize
   \centering
@@ -222,11 +221,7 @@ $k/d_{\mathrm{ff}}$ ($d_{\mathrm{ff}}=8{,}192$ and $16{,}384$); a contribution-w
 probability proportional to $|a_j|\,\|W_{\mathrm{fc2}}[:,j]\|$ on the claimed trace.
 
 \begin{table*}[t]
-  \caption{Edits within calibrated ranges can change the next token; uniform sampling rarely opens them, and
-  contribution weighting never opens edits that lower activations to zero. OPT-1.3B (layers 6/12/18/23
-  of 24) and OPT-6.7B (8/16/24/31 of 32): prompts whose next token changed (of \InrangePrompts{}),
-  median and maximum number $k$ of edited neurons, and median detection per path; ranges from
-  \InrangeCalibTokens{} WikiText-2 train tokens; fp32}
+  \caption{Edits within calibrated ranges on OPT-1.3B and OPT-6.7B---they can change the next token, uniform sampling rarely opens them, and contribution weighting never opens edits that lower activations to zero. Layers 6/12/18/23 of 24 and 8/16/24/31 of 32; \InrangePrompts{} prompts; ranges from \InrangeCalibTokens{} WikiText-2 train tokens; fp32}
   \label{tab:inrange}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}

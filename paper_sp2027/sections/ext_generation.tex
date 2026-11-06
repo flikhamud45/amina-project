@@ -57,10 +57,7 @@ For $G\in\{64,256\}$ the prover takes \GenOverDecodeC{} times the time of genera
 in mode $\sC$ and \GenOverDecodeK{} times in $\Kpre$.
 
 \begin{table}[t]
-  \caption{A whole generated response is proved and verified in seconds. A greedy $G$-token
-  response after a $P$-token prompt, proved as one prefill (full models): prover time P (one
-  \PlatformGpu{}), verifier time V (8 threads of an \PlatformCpu{}, token rule included) and proof
-  size}
+  \caption{Proving a whole generated response---a greedy response is proved and verified in seconds. $G$ tokens after a $P$-token prompt, proved as one prefill (full models); P: prover (one \PlatformGpu{}); V: verifier (8 threads of an \PlatformCpu{}, token rule included)}
   \label{tab:gen}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -76,11 +73,7 @@ in mode $\sC$ and \GenOverDecodeK{} times in $\Kpre$.
 \end{table}
 
 \begin{table}[t]
-  \caption{Sampled responses cost about as much as greedy ones, and the proof per token falls as
-  the response grows. Responses of $G$ tokens proved as one prefill (GPT-2 after a 64-token prompt,
-  greedy; Llama-2-7B and Qwen3-4B after a 512-token prompt; full models, 3 queries per cell), timed
-  as in Table~\ref{tab:gen}; sampled: the integer sampler with the client's seed; MB/token: the
-  proof divided by $G$}
+  \caption{Sampled against greedy responses---sampled ones cost about as much, and the proof per token falls as the response grows. GPT-2 after a 64-token prompt (greedy); Llama-2-7B and Qwen3-4B after 512 tokens; full models, 3 queries per cell, timed as in Table~\ref{tab:gen}; sampled: the integer sampler with the client's seed; MB/token: the proof over $G$}
   \label{tab:gen-full}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -136,9 +129,7 @@ scalar norm gain of 4 and 8-bit probabilities and is calibrated on one 128-token
 of the test split.
 
 \begin{table}[t]
-  \caption{The LayerNorm outputs cause the largest part of the integer model's perplexity gap. OPT-125M's
-  WikiText-2 perplexity (16 windows of 128 tokens) with one component in float (leave-one-out) or
-  only that component integer (add-one); the integer graph has \AttrIntPpl{}, fp32 \AttrFpPpl{}}
+  \caption{Which integer component costs OPT-125M perplexity---the LayerNorm outputs cause the largest part of the gap. WikiText-2, 16 windows of 128 tokens; one component in float (leave-one-out) or only it integer (add-one); integer graph \AttrIntPpl{}, fp32 \AttrFpPpl{}}
   \label{tab:quality-attr}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -210,9 +201,7 @@ scores exact next-token predictions; the integer model picks the fp16 answer on
 
 \begin{table*}[t]
   \centering
-  \caption{The certified integer models lose little zero-shot accuracy, and less as the model
-  grows. Accuracy (\%) in fp16, and integer minus fp16 ($\Delta$) with its 95\% paired bootstrap
-  interval; HellaSwag: a fixed 2{,}000-document subset}
+  \caption{Zero-shot accuracy of the integer models against fp16---they lose little, and less as the model grows. $\Delta$: integer minus fp16 with its 95\% paired bootstrap interval; HellaSwag: a fixed 2{,}000-document subset}
   \label{tab:zeroshot}
   \small
   \setlength{\tabcolsep}{3pt}

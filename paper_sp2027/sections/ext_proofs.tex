@@ -936,11 +936,7 @@ behaves differently, better against edits that raise values and not at all again
 Theorem~\ref{thm:dich}(a) treat samplers in general.
 
 \begin{table}[t]
-  \caption{Uniform paths needed to catch an edit of $k$ neurons in one FFN layer of width $N$ with
-  probability $1-2^{-40}$: about $27.7N/k$ ($s_{40}(k,N)$, Proposition~\ref{prop:paths}). $k=1$ is the
-  edit measured on OPT-6.7B; $k=\InrangeKMedian{}$, $\InrangeDownKMedian{}$ and $\InrangeKMax{}$ are the
-  median in-range edit, the median lowering-only edit and the largest in-range edit on OPT-1.3B
-  (Section~\ref{sec:break}; lower medians); the other entries are illustrative.}
+  \caption{Uniform paths needed to catch an edit of $k$ neurons in an FFN layer of width $N$---about $27.7N/k$ for probability $1-2^{-40}$ ($s_{40}(k,N)$, Proposition~\ref{prop:paths}). $k=1$: the OPT-6.7B edit; $k=\InrangeKMedian{}$, $\InrangeDownKMedian{}$ and $\InrangeKMax{}$: the median in-range, median lowering-only and largest in-range edits on OPT-1.3B (Section~\ref{sec:break}; lower medians); other entries illustrative}
   \label{tab:paths}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}
@@ -954,9 +950,7 @@ Theorem~\ref{thm:dich}(a) treat samplers in general.
 \end{table}
 
 \begin{table*}[t]
-  \caption{Probability $(1-k/N)^s$ that $s$ uniform paths accept an edit of $k$ neurons in one FFN
-  layer: about $e^{-sk/N}$, small only when $s$ is several times $N/k$ (Proposition~\ref{prop:paths};
-  $k$ as in Table~\ref{tab:paths}).}
+  \caption{Probability $(1-k/N)^s$ that $s$ uniform paths accept an edit of $k$ neurons---about $e^{-sk/N}$, small only when $s$ is several times $N/k$ (Proposition~\ref{prop:paths}; $k$ as in Table~\ref{tab:paths})}
   \label{tab:paths-acc}
   \centering\footnotesize
   \setlength{\tabcolsep}{3.5pt}

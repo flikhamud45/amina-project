@@ -25,10 +25,7 @@ most \ProbBitsTime{}\% against 8-bit ones.
 \label{app:eval-improve}
 
 \begin{table}[t]
-  \caption{Each implementation improvement speeds up its phase and changes no claim, proof or
-  verdict. Times before and after, on the same queries (one \PlatformGpu{}; the CPU row on 8 threads
-  of an \PlatformCpu{}; $b/L$: $b$ of the model's $L$ blocks; $T{=}2{,}048$ tokens except for the
-  int8 opening)}
+  \caption{Times before and after each implementation improvement---each speeds up its phase and changes no claim, proof or verdict. One \PlatformGpu{}; the CPU row on 8 threads of an \PlatformCpu{}; $b/L$: $b$ of the model's $L$ blocks; $T{=}2{,}048$ tokens except for the int8 opening}
   \label{tab:eval-improve}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -81,10 +78,7 @@ so the times of those cells include them.
 \label{app:eval-untrusted}
 
 \begin{table}[t]
-  \caption{The client needs no GPU, but its memory grows with the prompt. Memory of one query on the full Llama-2-7B, in GB. Client: the peak resident set of
-  the CPU verifier in a process of its own (8 threads of an \PlatformCpu{}), and its resident set
-  after its imports. Prover GPU: the peak allocated memory of one \PlatformGpu{}. Process: the peak
-  resident set of the process that runs the prover and the verifier together}
+  \caption{Memory of one Llama-2-7B query, in GB---the client needs no GPU, but its memory grows with the prompt. Client: peak resident set of the CPU verifier alone (8 threads of an \PlatformCpu{}) and after its imports; prover GPU: peak allocated memory of one \PlatformGpu{}; process: peak resident set of prover and verifier together}
   \label{tab:memory}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -125,10 +119,7 @@ timed queries after a warm-up (three in OPT-6.7B's V1 cells), with the prover on
 claim, output logit or last hidden state) rejected.
 
 \begin{table}[t]
-  \caption{Real weights take about the same time as random ones and give a smaller v0 proof. The
-  certified OPT-1.3B (full model) against random int8 weights of the same shapes, each cell as real
-  / random; prove (one \PlatformGpu{}) and verify (8 threads of an \PlatformCpu{}): v0's timed
-  queries}
+  \caption{Real against random weights on OPT-1.3B---about the same time, and a smaller v0 proof with real weights. Each cell real / random; prover on one \PlatformGpu{}, verifier on 8 threads of an \PlatformCpu{}}
   \label{tab:eval-real}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.5pt}
@@ -199,10 +190,7 @@ reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens, int
 \BreakevenTokensVOneMeasuredTo{}; the 2{,}048-token ratio at every length would give about \BreakevenTokensVOneConstant{}.
 
 \begin{table}[t]
-  \caption{At long prompts the CPU verifier stays faster than exact re-execution, while the proof
-  grows linearly. The full Llama-2-7B extrapolated from builds of 2, 3 and 4 blocks (random
-  weights): the CPU verifier ($\Kpre$) against the fastest exact re-execution (glibc's default
-  allocator) on the same 8 threads of an \PlatformCpu{}, and the proof}
+  \caption{CPU verifier against exact re-execution at long prompts---the verifier stays faster, while the proof grows linearly. Full Llama-2-7B extrapolated from 2, 3 and 4 random-weight blocks; 8 threads of an \PlatformCpu{}; the fastest exact re-execution, glibc's default allocator}
   \label{tab:eval-long}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -216,10 +204,7 @@ reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens, int
 \end{table}
 
 \begin{table}[t]
-  \caption{The extrapolation is close to the full Llama-2-7B where we measure it. The verifier
-  ($\Kpre$), the fastest exact re-execution on the same device and the proof, each as measured /
-  extrapolated (CPU: 8 threads of an \PlatformCpu{}, builds of 2, 3 and 4 blocks; GPU: the streaming
-  verifier and re-execution on the \PlatformGpu{}, builds of 2 and 3 blocks)}
+  \caption{Measured against extrapolated values---the extrapolation is close to the full Llama-2-7B. Each cell measured / extrapolated; CPU: 8 threads of an \PlatformCpu{}, builds of 2, 3 and 4 blocks; GPU: the \PlatformGpu{}, builds of 2 and 3 blocks}
   \label{tab:eval-long-check}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -233,11 +218,7 @@ reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens, int
 \end{table}
 
 \begin{table}[t]
-  \caption{On a GPU, exact re-execution with the weights stays faster than our streaming verifier
-  at every prompt length. Long prompts on the \PlatformGpu{}: the full Llama-2-7B extrapolated from
-  builds of 2 and 3 blocks (random weights). The streaming GPU verifier ($\Kpre$) against re-execution on the same GPU
-  (exact with int8 GEMMs, and fp16), and the peak GPU memory of the 3-block process that proves and
-  verifies}
+  \caption{GPU verifier against GPU re-execution at long prompts---exact re-execution with the weights stays faster at every length. Full Llama-2-7B on the \PlatformGpu{}, extrapolated from 2 and 3 random-weight blocks; re-execution exact with int8 GEMMs, and fp16; memory: peak of the 3-block process that proves and verifies}
   \label{tab:eval-long-gpu}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -251,9 +232,7 @@ reaches the size of its int8 weights at about \BreakevenTokensVOne{} tokens, int
 \end{table}
 
 \begin{table}[t]
-  \caption{V1 keeps most of its gain at long prompts. v0's and V1's proofs, V1's prover and
-  CPU verifier on 2 Llama-2-7B blocks (whole queries, $\Kpre$, random weights), and the claims ratio
-  (v0 over V1) of the full model from its codec profile}
+  \caption{v0 against V1 at long prompts---V1 keeps most of its gain. 2 Llama-2-7B blocks (whole queries, $\Kpre$, random weights); claims ratio: v0 over V1 for the full model, from its codec profile}
   \label{tab:eval-v1-long}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -301,12 +280,7 @@ $\sC$), \CrossoverOptSLongK{}\,Gb/s (OPT-125M, 2{,}048 tokens, $\Kpre$) and \Cro
 \label{app:eval-reexec}
 
 \begin{table}[h]
-  \caption{On a CPU, our verifier is at least as fast as exact re-execution and faster than fp32
-  inference. Times in seconds, full models. GPU: one \PlatformGpu{}, the integer forward pass on int8
-  tensor cores and the fp16 decoder. CPU: Llama-2-7B on 8 threads of an \PlatformCpu{}, our $\Kpre$
-  verifier, exact re-execution (the integer forward pass), and fp32 inference and
-  llama.cpp~\cite{llamacpp} with Q8\_0 and bf16 weights, which compute a different model of the same
-  shapes}
+  \caption{Our verifier against re-execution and inference---on a CPU it is at least as fast as exact re-execution and faster than fp32 inference. Seconds, full models. GPU: one \PlatformGpu{}, int8 tensor cores and the fp16 decoder; CPU: Llama-2-7B on 8 threads of an \PlatformCpu{}; llama.cpp~\cite{llamacpp} (Q8\_0, bf16) computes a different model of the same shapes}
   \label{tab:eval-reexec}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -346,11 +320,7 @@ emulates no CPU without AVX-512. For Llama-2-13B, the verifier takes \CpuVerifyT
 \CpuReexecThirteen{}\,s for exact re-execution (\CpuRatioThirteen{}$\times$).
 
 \begin{table}[t]
-  \caption{The CPU verifier against exact re-execution on fewer cores, without the AVX-512 attention
-  kernel and on a larger model. Times in seconds at 2{,}048 tokens (full models, $\Kpre$; re-execution:
-  the fastest exact variant with glibc's default allocator): Llama-2-7B on 2, 4 and 8 cores of one
-  NUMA node of an \PlatformCpu{}, one thread per core, and on 8 without the AVX-512 attention kernel
-  in either; Llama-2-13B on 8 cores}
+  \caption{CPU verifier against exact re-execution on fewer cores, without the AVX-512 attention kernel, and on Llama-2-13B. Seconds at 2{,}048 tokens ($\Kpre$; the fastest exact re-execution, glibc's default allocator); cores of one NUMA node of an \PlatformCpu{}, one thread per core}
   \label{tab:eval-cpu}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -376,12 +346,7 @@ proof, the claims alone, does not change), and the CPU verifier takes \LamFortyV
 \LamFortyVerifyK{}\% ($\Kpre$) of its time.
 
 \begin{table}[t]
-  \caption{Longer codewords open fewer columns per query, at a higher one-time encoding cost. Mode
-  $\sC$'s candidate plans on the full Llama-2-7B, the same 2{,}048-token queries: the Merkle trees of
-  encoded matrices and the columns they open per query, the one-time encoding on the
-  \PlatformGpu{}, the proof, the prover and the CPU verifier (8 threads of the \PlatformCpu{}).
-  $n\ge2^e$: every matrix at $\max(2^e,2\,\mathrm{next\_pow2}(k))$ points; tight: the per-operation
-  lengths; rate~$R$: every matrix at rate $R$; each with the transposed layout and lookup tables}
+  \caption{Mode $\sC$'s candidate plans on Llama-2-7B---longer codewords open fewer columns per query, at a higher one-time encoding cost. The same 2{,}048-token queries; encoding on the \PlatformGpu{}, verifier on 8 threads of the \PlatformCpu{}. $n\ge2^e$: every matrix at $\max(2^e,2\,\mathrm{next\_pow2}(k))$ points; tight: the per-operation lengths; rate~$R$: every matrix at rate $R$; all with the transposed layout and lookup tables}
   \label{tab:eval-plans}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -395,9 +360,7 @@ proof, the claims alone, does not change), and the CPU verifier takes \LamFortyV
 \end{table}
 
 \begin{table}[t]
-  \caption{A lower security level shrinks mode $\sC$'s opened columns and the
-  verifier's checks, which matter only at short prompts. The full Llama-2-7B at $\lambda=40$, 80 and 128: the prover (one \PlatformGpu{}), the
-  CPU verifier (8 threads of an \PlatformCpu{}), times in seconds, and the proof}
+  \caption{Llama-2-7B at $\lambda=40$, 80 and 128---a lower security level shrinks mode $\sC$'s opened columns and the verifier's checks, which matter only at short prompts. Prover on one \PlatformGpu{}, verifier on 8 threads of an \PlatformCpu{}}
   \label{tab:eval-lambda}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}
@@ -416,9 +379,7 @@ proof, the claims alone, does not change), and the CPU verifier takes \LamFortyV
 \label{app:eval-compare-v1}
 
 \begin{table}[t]
-  \caption{V1 shrinks our proof, which stays far larger than those of zkLLM and zkGPT. Proof sizes
-  against the published systems of Table~\ref{tab:eval-compare} (ours: mode $\sC$, full models; v0
-  sends \CompareVOneOptS{}\,MB and \CompareVOneOptM{}\,MB for the two OPT rows)}
+  \caption{Proof sizes against published systems---V1 shrinks our proof, which stays far larger than those of zkLLM and zkGPT. Ours: mode $\sC$, full models; v0 sends \CompareVOneOptS{}\,MB and \CompareVOneOptM{}\,MB for the two OPT rows}
   \label{tab:eval-compare-v1}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -432,10 +393,7 @@ proof, the claims alone, does not change), and the CPU verifier takes \LamFortyV
 \end{table}
 
 \begin{table*}[t]
-  \caption{Our prover is faster in every row of the full comparison with published systems.
-  Table~\ref{tab:eval-compare} prints a selection, with the same settings and notes ($^a$--$^d$); the
-  rows ``zkLLM, \PlatformGpu{}'' time zkLLM's public demo on our GPU (prover only;
-  Appendix~\ref{ext:disc-options}) against our interactive cells}
+  \caption{Full comparison with published systems---our prover is faster in every row. Settings and notes ($^a$--$^d$) as in Table~\ref{tab:eval-compare}; rows ``zkLLM, \PlatformGpu{}'': zkLLM's public demo on our GPU (prover only; Appendix~\ref{ext:disc-options}) against our interactive cells}
   \label{tab:eval-compare-full}
   \centering\footnotesize
   \setlength{\tabcolsep}{2.5pt}

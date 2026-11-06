@@ -36,9 +36,7 @@ catches a single changed node with probability at most $1/N$ in a layer of width
     \includegraphics[width=0.47\columnwidth]{figures/overview_attack.pdf}}\hfill
   \subfloat[Defence: caught except with probability $2^{-\lambda}$]{%
     \includegraphics[width=0.47\columnwidth]{figures/overview_defence.pdf}}
-  \caption{A tampered neuron with later layers recomputed honestly passes a random path (a) but not
-  our check of every layer (b). The provider changes one neuron's value and recomputes the later layers
-  with the true weights.}
+  \caption{A random path against our check of every layer---a tampered neuron with honestly recomputed later layers passes the path (a) but not our check (b)}
   \label{fig:overview}
 \end{figure}
 

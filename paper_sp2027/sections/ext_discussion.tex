@@ -130,11 +130,7 @@ the attention scores' softmax and $2^{22}$ for SwiGLU), so its demo, run unchang
 prompts; the table marks such a length as failed.
 
 \begin{table}[t]
-  \caption{On the same GPU, zkLLM's prover is much slower than ours. zkLLM's public
-  demo (commit 993311e) against our prover on the \PlatformGpu{} at each prompt length $T$: the
-  prover's time for the full model (zkLLM: its proof binaries on two decoder layers times the
-  layers; ours: mode $\sC$, interactive) and zkLLM's time over ours; fails: zkLLM's demo stopped
-  with an error at this length}
+  \caption{zkLLM against our prover on the same GPU---zkLLM's prover is much slower. zkLLM: its public demo (commit 993311e), two decoder layers scaled to the full model; ours: mode $\sC$, interactive; fails: zkLLM's demo stopped with an error}
   \label{tab:zkllm-lengths}
   \centering\footnotesize
   \setlength{\tabcolsep}{3pt}

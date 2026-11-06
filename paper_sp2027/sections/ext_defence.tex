@@ -93,10 +93,7 @@ for $a=100$, the setup proof of Llama-2-7B takes \SetupProverLlama{} to prove on
 \SetupVerifierLlama{} to verify on 8 threads of the \PlatformCpu{}, and GPT-2's \SetupProverGpt{} and \SetupVerifierGpt{}.
 
 \begin{table}[t]
-  \caption{An untrusted commitment costs a one-time setup proof and more opened columns per query.
-  Radii chosen for $a=100$ or $1{,}000$ amortised queries; $\lambda=128$, interactive queries, byte
-  model with 4 bytes per field element, mode $\sC$ with codewords of at least
-  $2^{\PlanLogPoints{}}$ points}
+  \caption{Cost of an untrusted commitment---a one-time setup proof and more opened columns per query. Radii for $a=100$ or $1{,}000$ amortised queries; $\lambda=128$; interactive; 4 bytes per field element; mode $\sC$ with codewords of at least $2^{\PlanLogPoints{}}$ points}
   \label{tab:setup}
   \centering
   \footnotesize
@@ -142,7 +139,6 @@ Figure~\ref{fig:protocol} shows the three rounds of one query in mode $\sC$ with
 \begin{figure}[t]
   \centering
   \includegraphics[width=\columnwidth]{figures/protocol.pdf}
-  \caption{One query in mode $\sC$ with an honest commitment. Each value is fixed before the
-  randomness that tests it}
+  \caption{One query in mode $\sC$ with an honest commitment---each value is fixed before the randomness that tests it}
   \label{fig:protocol}
 \end{figure}
