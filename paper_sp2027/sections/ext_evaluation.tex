@@ -320,7 +320,7 @@ emulates no CPU without AVX-512. For Llama-2-13B, the verifier takes \CpuVerifyT
 \CpuReexecThirteen{}\,s for exact re-execution (\CpuRatioThirteen{}$\times$).
 
 \begin{table}[t]
-  \caption{CPU verifier against exact re-execution on fewer cores, without the AVX-512 attention kernel, and on Llama-2-13B. Seconds at 2{,}048 tokens ($\Kpre$; the fastest exact re-execution, glibc's default allocator); cores of one NUMA node of an \PlatformCpu{}, one thread per core}
+  \caption{CPU verifier against exact re-execution on fewer cores, without the AVX-512 attention kernel, and on Llama-2-13B---our verifier stays faster in every setting, most of all on few cores. Seconds at 2{,}048 tokens ($\Kpre$; the fastest exact re-execution, glibc's default allocator); cores of one NUMA node of an \PlatformCpu{}, one thread per core}
   \label{tab:eval-cpu}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
