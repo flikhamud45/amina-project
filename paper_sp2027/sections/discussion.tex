@@ -7,13 +7,9 @@
 \label{sec:discussion}
 
 \para{Who the protocol serves.} It serves a CPU client of an open-weight model that holds neither
-the weights nor a GPU and will not trust hardware, and a gateway or auditor with the GPU verifier. A
+the weights nor a GPU and will not trust a TEE, and a gateway or auditor with the GPU verifier. A
 client with the weights and a GPU should re-execute. The regime is narrow
-(Figure~\ref{fig:breakeven}; Llama-2-7B, Fiat--Shamir). Below about \BreakevenQueriesShort{} queries of 64 tokens,
-mode-$\sC$ proofs cost the client fewer bytes than one download of the int8 weights; at 2{,}048
-tokens the weights are only \BreakevenQueriesLong{}$\times$ the size of one proof, or \BreakevenQueriesVOne{}$\times$ with V1. A $\Kpre$ client that could keep the weights
-verifies faster than exact re-execution on its CPU only on links faster than
-\BreakevenLinkRange{}\,Gb/s\BreakevenVOneClause{}.
+(Section~\ref{sec:eval-reexec}, Figure~\ref{fig:breakeven}).
 
 \para{Proof size.} The proof carries every weight operation's output, so it grows with the prompt.
 For Llama-2-7B it reaches the size of the int8 weights at about \BreakevenTokens{} tokens without V1 and at about
@@ -28,9 +24,9 @@ binds, as Hollow-LLM shows for zkSNARKs~\cite{hollowllm}.
 are untested. Up to 16{,}384 tokens we extrapolate Llama-2-7B from 2- to 4-block builds with random weights of its shapes (within \LongCheckMax{}\% of the full model; real
 OPT weights cost about as much, Section~\ref{sec:eval-setup}); there the proof reaches about
 \LongProofLong{}\,GB. At 2{,}048 tokens the certified OPT models stay close to the floating-point
-model, but our integer Llama-2-7B (\LlamaSevenRatio{}$\times$) and Qwen3-4B (\QwenLRatio{}$\times$) do not. FlashProve~\cite{flashprove}, a hash-based zkSNARK for
-greedy decoding of Llama~4 Maverick over 1{,}024-token windows, appeared two weeks before our submission;
-we treat it as concurrent work and do not compare with it.
+model, but the perplexity of our integer Llama-2-7B and Qwen3-4B is \LlamaSevenRatio{}$\times$ and
+\QwenLRatio{}$\times$ that of fp32 (Section~\ref{sec:quality}). FlashProve~\cite{flashprove}, a hash-based zkSNARK for greedy decoding of
+Llama~4 Maverick, appeared two weeks before our submission; we do not compare with it.
 
 \para{The attack and the bound.} Condition (H) is proved for random ensembles with independent rows
 and for the constructed worst case, not for trained networks, where our evidence is the best
@@ -39,8 +35,9 @@ attacks found, including in-range edits of OPT-1.3B and OPT-6.7B (Section~\ref{s
 \section{Conclusion}
 \label{sec:conclusion}
 
-Spot-checking an unencoded trace is not fully sound: an edit followed by honest recomputation is
-the honest trace of a model that differs in one row, which in the worst case no sampler finds
-faster than uniform sampling. Freivalds' checks of every weight operation against a linear-code
-commitment restore full soundness with only a hash function and a prover orders of magnitude
-faster than the zkSNARK provers we compare with. This serves a client with neither the weights nor a GPU; the cost is a proof that grows with the prompt, which V1 shrinks.
+Spot-checking an unencoded trace is not fully sound, but checking every weight operation is, with a
+prover orders of magnitude faster than the zkSNARK provers we compare with. An edit followed by
+honest recomputation is the honest trace of a model that differs in one row, which in the worst case
+no sampler finds faster than uniform sampling. Freivalds' checks against a linear-code commitment
+need only a hash function and serve a client with neither the weights nor a GPU; the cost is a proof
+that grows with the prompt, which V1 shrinks.

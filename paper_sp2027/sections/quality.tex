@@ -11,7 +11,7 @@ predicted tokens), as published results do, calibrating on four windows of the t
 references reproduce the published values (\QualityRefOptS{}, \QualityRefOptM{}, \QualityRefOptL{}).
 
 \begin{table}[t]
-  \caption{WikiText-2 perplexity of the certified models against fp32---per-channel norm gains bring the OPT models close to fp32}
+  \caption{WikiText-2 perplexity of the certified models against fp32---per-channel gains bring the OPT models close to fp32}
   \label{tab:quality}
   \centering\footnotesize
   \setlength{\tabcolsep}{4pt}
@@ -26,49 +26,51 @@ references reproduce the published values (\QualityRefOptS{}, \QualityRefOptM{},
   \smallskip
   \parbox{\columnwidth}{\footnotesize WikiText-2 test perplexity, 2{,}048-token windows, 11-bit attention
   probabilities. Scalar gain: ratio to fp32 with the best scalar gain. Certified: perplexity (ratio)
-  with smoothed gains ($\alpha=0.6$); 95\% intervals of the ratio: [\QualityCIOptS{}], [\QualityCIOptM{}] and
+  with per-channel gains ($\alpha=0.6$); 95\% intervals of the ratio: [\QualityCIOptS{}], [\QualityCIOptM{}] and
   [\QualityCIOptL{}]. Top-1 agr.: top-1 agreement with fp32.}
 \end{table}
 
-\para{Where the perplexity goes.} The integer LayerNorm outputs a gain times the normalised value.
-With the best scalar gain, perplexity is \QualityScalarExcessOptS{}\%, \QualityScalarExcessOptM{}\% and \QualityScalarExcessOptL{}\% above fp32
-(Table~\ref{tab:quality}). Switching each component of a float copy of the graph
-between integer and float locates the loss in the norm's outputs (on OPT-125M at 128 tokens, float
-outputs remove more than half of the gap). The loss comes from rounding, not clipping: a few
-outlier channels of OPT's residual stream inflate the standard deviation, so a scalar gain that keeps them within int8 leaves the other channels few levels. At
-2{,}048 tokens, 8-bit attention probabilities change perplexity by \QualityProbCost{}\%, as a rounded row
+\para{Where the perplexity goes.} Most of the loss comes from rounding the integer LayerNorm's
+output, a gain times the normalised value. With the best scalar gain, perplexity is \QualityScalarExcessOptS{}\%, \QualityScalarExcessOptM{}\% and \QualityScalarExcessOptL{}\% above fp32
+(Table~\ref{tab:quality}). Switching components of a float copy of the graph between integer and
+float confirms this (on OPT-125M at 128 tokens, float norm outputs remove more than half of the gap).
+A few outlier channels of OPT's residual stream inflate the standard deviation, so a scalar gain that
+keeps them within int8 leaves the other channels few levels. Attention probabilities need 11 bits: at 2{,}048 tokens, 8-bit
+ones change perplexity by \QualityProbCost{}\%, as a rounded row
 keeps as little as \QualityMassMinEight{}\% of its mass. The certified models and all costs use 11-bit probabilities
 (at least \QualityMassMinEleven{}\% of the mass), which change the proof's size by at most \ProbBitsBytes{}\% and the
 prover's and verifier's times by at most \ProbBitsTime{}\% (Llama-2-7B, 2 blocks, 2{,}048 tokens).
 
 \para{SmoothQuant through the norm's gains.} Per-channel gains absorb SmoothQuant's
 scaling~\cite{xiao2023smoothquant}: channel $j$ gets the gain $\gamma_j=\kappa/s_j$ with
-$s_j=\rho_j^{\alpha}/\omega_j^{1-\alpha}$, where $\rho_j$ is the channel's largest normalised
+$s_j=\rho_j^{\alpha}/\omega_j^{1-\alpha}$ and $\kappa$ mapping the largest $\rho_j\gamma_j$ to 127, where $\rho_j$ is the channel's largest normalised
 magnitude on the calibration windows and $\omega_j$ the largest magnitude in column $j$ of the
 matrices that the norm feeds, into which $1/\gamma_j$ is folded. This is SmoothQuant-O3 (per-tensor
 weights, static per-tensor activations) inside the integer graph. Multipliers stay scalars and no
 operation or shape changes, so the costs, the verifier and V1 are unaffected; the graph digest binds
-the gains. Percentile statistics with clipping, tuned on short windows, transferred badly to the
-test text (OPT-1.3B: \QualityLegacyLo{}--\QualityLegacyHi{}$\times$ by calibration window); channel maxima without
-clipping vary across calibration windows by only $\pm$\QualityDrawSpread{}, and $\alpha=0.6$ gives the certified models of Table~\ref{tab:quality}. On six zero-shot tasks (LAMBADA, HellaSwag, PIQA, ARC-e, ARC-c,
+the gains. We use channel maxima without clipping, with which OPT-1.3B's perplexity ratio varies
+across calibration windows by only \QualityDrawSpread{}; clipped percentiles tuned on short windows
+gave it \QualityLegacyLo{}--\QualityLegacyHi{}$\times$, depending on the window. Table~\ref{tab:quality} uses $\alpha=0.6$. On six zero-shot tasks (LAMBADA, HellaSwag, PIQA, ARC-e, ARC-c,
 WinoGrande), the certified OPT-125M and OPT-1.3B lose \ZeroshotMeanOptS{} and \ZeroshotMeanOptM{} points of accuracy on average,
 and OPT-6.7B matches fp16 (mean difference \ZeroshotMeanOptL{}). LAMBADA (exact next-token predictions) loses the
 most (\ZeroshotLambadaOptS{}, \ZeroshotLambadaOptM{} and \ZeroshotLambadaOptL{} points); on OPT-6.7B the 95\% interval of every
 multiple-choice difference contains zero.
+
+\para{Llama and Qwen3.} These models need more constants, each a published equivalent
+transformation that changes no operation and no cost: (i)~a fixed public prefix whose int8 keys and
+values enter each attention operation and take the first token's massive
+activation~\cite{chen2024prefixquant,son2024cushioncache}; Llama-2-7B's prefix adds to PrefixQuant's an
+outlier token that the latter does not absorb; (ii)~a per-channel balance of the SwiGLU product, folded into the
+up and down projections~\cite{xiao2023smoothquant,lin2024awq}; and (iii)~for Qwen3, a balance of the
+q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$ and $W_k$ are rescaled
+to a common int8 range (the per-head RMSNorm is invariant to this rescaling). We choose $\alpha$ and the SwiGLU balance per model on the test split, except for Llama-2-13B, whose
+values were fixed in advance. With them, the ratio to fp32 at 2{,}048 tokens is \LlamaSevenRatio{}$\times$ (95\% interval [\LlamaSevenCI{}]) for Llama-2-7B (our benchmark),
+\TinyLlamaRatio{}$\times$ for TinyLlama, \QwenMRatio{}$\times$ for Qwen3-1.7B and \QwenLRatio{}$\times$ for Qwen3-4B, whose
+second massive activation its prefix takes only barely, and to fp16 \LlamaThirteenRatio{}$\times$ ([\LlamaThirteenCI{}]) for Llama-2-13B.
 
 \para{Comparison.} SmoothQuant-O3 raises perplexity by 1.6\% on OPT-175B and 0.8\% on
 OPT-IML-30B~\cite{xiao2023smoothquant}; ZeroQuant-V2, with per-token activations and 16-bit
 weights, by about 1\% on OPT-125M and 4\% on OPT-1.3B~\cite{yao2023zeroquantv2}. Proof systems
 that keep 16-bit values stay under 1\%~\cite{zkllm,zkgpt}. We aimed at 1.06$\times$, 1.04$\times$
 and 1.05$\times$ for OPT-125M, OPT-1.3B and OPT-6.7B; the two larger models meet these targets and
-OPT-125M misses by \QualityMissOptS{}. Llama- and Qwen3-style models need more constants, each a
-published equivalent transformation that changes no operation and no cost: a fixed public prefix
-whose int8 keys and values enter each attention operation and take the first token's massive
-activation~\cite{chen2024prefixquant,son2024cushioncache}, a per-channel balance of the SwiGLU
-product folded into the up and down projections~\cite{xiao2023smoothquant,lin2024awq}, and for
-Qwen3 a balance of the q and k norms' gains~\cite{shao2024omniquant}, after each head's rows of $W_q$
-and $W_k$ are rescaled to a common int8 range, to which the per-head RMSNorm is invariant; Llama-2-7B's prefix adds an outlier token to PrefixQuant's, which does not
-absorb it. We choose $\alpha$ and the SwiGLU balance per model on the test split, except for Llama-2-13B, whose
-values were fixed in advance. With them, the ratio to fp32 at 2{,}048 tokens is \LlamaSevenRatio{}$\times$ (95\% interval [\LlamaSevenCI{}]) for Llama-2-7B (our benchmark),
-\TinyLlamaRatio{}$\times$ for TinyLlama, \QwenMRatio{}$\times$ for Qwen3-1.7B and \QwenLRatio{}$\times$ for Qwen3-4B, whose
-second massive activation its prefix takes only barely, and to fp16 \LlamaThirteenRatio{}$\times$ ([\LlamaThirteenCI{}]) for Llama-2-13B.
+OPT-125M misses by \QualityMissOptS{} in ratio.

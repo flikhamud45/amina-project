@@ -116,8 +116,8 @@ matrix of the first wrong operation). From (ii), every folded row the prover can
 an agreement set, which has probability at most its column term. A complete doomed transcript is
 rejected unless the prover finds a collision. The round-by-round error is therefore
 $\varepsilon_{\mathrm{rbr}}=\max\big(p^{-r},\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)\big)$, a maximum
-over the rounds and matrices, and a prover that makes $Q$ random-oracle queries succeeds with
-probability at most $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$~\cite{canetti2019fs,bcs16}. Since
+over the rounds and matrices, and a prover that makes $Q_H$ random-oracle queries succeeds with
+probability at most $Q_H\varepsilon_{\mathrm{rbr}}+O(Q_H^22^{-256})$~\cite{canetti2019fs,bcs16}. Since
 $\varepsilon_{\mathrm{rbr}}\le\varepsilon_{\sC}$, this implies the bound of Section~\ref{sec:fs},
 which is the one the parameters of Section~\ref{sec:fs} and Table~\ref{tab:params} meet: their
 $\beta$ keeps the $\log_2(2n_{\mathrm{op}})$ bits of the union bound. \qed
@@ -186,12 +186,12 @@ need this proof, since their per-query combination $[X;\mathbf 1]\chi'$ is not u
 
 \begin{theorem}[soundness with an untrusted commitment]
 \label{thm:untrusted}
-Model the hash functions as random oracles, and let the committer and the prover make at most $Q$
+Model the hash functions as random oracles, and let the committer and the prover make at most $Q_H$
 oracle queries in total. Let $C_M$ be any string and let $\pi$ be any setup proof that the verifier
 accepts. Then, except with probability
 \[
-  \varepsilon_0\le Q\sum_{j\in\mathcal J}\Big[\frac{n_j}{p^s}+\prod_{i<t^0_j}
-  \frac{n_j-e_j-1-i}{n_j-i}\Big]+O(Q^22^{-256}),
+  \varepsilon_0\le Q_H\sum_{j\in\mathcal J}\Big[\frac{n_j}{p^s}+\prod_{i<t^0_j}
+  \frac{n_j-e_j-1-i}{n_j-i}\Big]+O(Q_H^22^{-256}),
 \]
 every matrix $E_j$ that $C_M$ binds is $e_j$-close to $\enc(A^*_j)$ for a unique $A^*_j$. Let
 $M^*$ be the model with weights $A^*$ whose weight products are computed in $\F$ and lifted to
@@ -200,7 +200,7 @@ $y\neq M^*(x)$ with probability at most
 \[
   \varepsilon^*_{\sC}=\sum_{j\in\mathcal J}\Big[\,p^{-r}+\prod_{i<t_j}\frac{k_j+e_j-1-i}{n_j-i}\,\Big],
 \]
-or $Q\varepsilon^*_{\sC}+O(Q^22^{-256})$ under Fiat--Shamir. If the client recomputes $C_M$, then
+or $Q_H\varepsilon^*_{\sC}+O(Q_H^22^{-256})$ under Fiat--Shamir. If the client recomputes $C_M$, then
 $e_j=0$, no setup proof is needed, and the bound is that of Theorem~\ref{thm:sound}.
 \end{theorem}
 
@@ -215,8 +215,8 @@ the radius $e_j=\lfloor f(n_j-k_j)/2\rfloor$ for all its members, with $f\in\{2^
 chosen to minimise $t^0/a+t$; $t^0$ is the least integer with
 $\prod_{i<t^0}(n_j-e_j-1-i)/(n_j-i)\le2^{-\beta_0}$, and the per-query $t$ the least with
 $\prod_{i<t}(k_j+e_j-1-i)/(n_j-i)\le2^{-\beta}$, both for every member. Then
-$\varepsilon_0\le Q\cdot2|\mathcal J|\cdot2^{-\beta_0}+O(Q^22^{-256})\le2^{-\lambda}+O(Q^22^{-256})$ for
-$Q\le2^{64}$.
+$\varepsilon_0\le Q_H\cdot2|\mathcal J|\cdot2^{-\beta_0}+O(Q_H^22^{-256})\le2^{-\lambda}+O(Q_H^22^{-256})$ for
+$Q_H\le2^{64}$.
 
 \para{Extraction.} In the random-oracle model, the oracle queries made before $C_M$ is output
 determine, for every root, the leaves it was built from, unless they contain a collision, which has
@@ -246,7 +246,7 @@ Fact~\ref{fact:ext} the check at column $c$ passes for all of them exactly when 
 with $\psi^\T E_j$ at $c$. That happens on at most $n_j-e_j-1$ columns, a set fixed when the message
 is sent, so the $t^0_j$ columns drawn afterwards all fall into it with probability at most
 $\prod_{i<t^0_j}(n_j-e_j-1-i)/(n_j-i)$. The setup proof is a public-coin protocol whose rounds have
-these errors, so under Fiat--Shamir the bound gains the factor $Q$~\cite{canetti2019fs,bcs16}. Its
+these errors, so under Fiat--Shamir the bound gains the factor $Q_H$~\cite{canetti2019fs,bcs16}. Its
 round-by-round error is again the largest single term; $\beta_0$ budgets the sum of all
 $2|\mathcal J|$ terms, which is conservative.
 

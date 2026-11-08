@@ -4,6 +4,9 @@
 \section{Attacking Spot-Checking Proofs}
 \label{sec:attack}
 
+A single edited value, with everything after it recomputed honestly, passes any spot-checking
+verifier whose sample misses it, and in the worst case no sampler does better.
+
 \subsection{Setting and Threat Model}
 \label{sec:threat}
 
@@ -17,16 +20,16 @@ honest run of a different model.
 \para{Spot-checking.} The provider commits to the execution trace, and the verifier checks a few
 \emph{sites} against committed data: neurons with their incoming weights in the path protocol,
 layer chunks in SLP~\cite{slp}, (layer, token) cells in CommitLLM~\cite{commitllm2026}. The trace
-has no error-correcting encoding, so a changed value is visible at one site only.
+has no error-correcting encoding, so an edited value is visible at one site only.
 
 \para{Adversary.} The provider keeps the committed weights but may deviate arbitrarily on any
-queries it chooses. It knows the sampling rule, even one that adapts to the claimed values, but not the verifier's coins. As
-in~\cite{anchuri2026verifiable}, $C_M$ is computed honestly: for open weights, the client trusts
-any one party that recomputed it from the public checkpoint and recipe, or recomputes it once
-itself without keeping the checkpoint; Section~\ref{sec:setup-proof} removes this assumption. The
-proof covers token ids, which the client obtains with the public tokenizer; a system prompt that
-the provider prepends is part of $x$, so the client receives it, and no verifier can certify a
-hidden one.
+queries it chooses. It knows the sampling rule, even one that adapts to the claimed values, but not the verifier's coins.
+
+\para{Trust.} As in~\cite{anchuri2026verifiable}, $C_M$ is honest: for open weights, any one
+trusted party, or the client once and without keeping the checkpoint, recomputes it from the
+public checkpoint and recipe; Section~\ref{sec:setup-proof} removes this assumption. The proof
+covers token ids, which the client obtains with the public tokenizer; a system prompt the provider
+prepends is part of $x$ and sent to the client; no verifier can certify a hidden one.
 
 \subsection{The Path Protocol and the Single-Site Edit}
 \label{sec:path}
@@ -35,7 +38,7 @@ In the path protocol of Anchuri et al.\ (RandPathTest), the prover Merkle-commit
 activation~\cite{merkle1987}. The verifier walks from a random output neuron to the input through
 random parents. At each node $j$ it opens the parents' activations $a_i$ and the weights $w_{ij}$,
 and checks $a_j=\phi\big(\sum_i w_{ij}a_i\big)$ up to a floating-point tolerance. Against the
-$1/N$ chance that a path catches one changed node in a layer of width $N$, Anchuri et al.\ suggest
+$1/N$ chance that a path catches one edited node in a layer of width $N$, Anchuri et al.\ suggest
 more paths, or sampling where it matters.
 
 \para{The single-site edit.} Our adversary runs the correct model on $x$ and changes the
@@ -43,7 +46,7 @@ activation of one neuron $u$ to make the output wrong (or a class of its choice)
 all later layers \emph{with the true weights}: only $u$ fails its check, and $s$ paths miss it
 with probability $(1-1/N)^s$. Applied only to triggered inputs, the edit is a
 backdoor~\cite{gu2019badnets} in the serving code that leaves the weights clean and clean queries
-bit for bit unchanged. Repeated queries do not help: a provider that tampers with $k$ queries is
+bit for bit unchanged. Repeated queries do not help: a provider that edits $k$ queries is
 caught with probability at most $1-(1-1/N)^k\le k/N$.
 
 \subsection{Why Sampling Cannot Fix It}
@@ -57,19 +60,20 @@ from what it sees (Theorem~\ref{thm:guess}).
 Fix a \emph{target layer} of width $N$. Row $\theta_i$ holds the incoming weights and bias of
 neuron $i$, whose value on $x$ is $h_i=f_i(\theta_i)$. The verifier knows all other layers and the
 \emph{view} $P=(x,Z,\tau')$: the query, public side information $Z$ (such as natural ranges) and
-the whole claimed trace $\tau'$. It learns $\theta$ only through a commitment oracle, whose query
+the whole claimed trace $\tau'$. It learns $\theta$ only through a commitment oracle, whose \emph{probe}
 $\sigma$ returns a symbol that depends only on the rows in its \emph{support}
-$S_\sigma\subseteq[N]$; the oracle has \emph{locality} $d$ if always $|S_\sigma|\le d$. A prover
-message checked against the commitment, such as a folded row $\chi^{\top}\!A$, is a query whose
-support is the set of rows on which the honest message depends. $V\in\mathrm{Spot}_d(q)$ chooses
-each query from $P$, its coins and the earlier answers; always accepts the honest trace and oracle
+$S_\sigma\subseteq[N]$; the oracle has \emph{locality} $d$ if always $|S_\sigma|\le d$.
+$V\in\mathrm{Spot}_d(q)$ chooses
+each probe from $P$, its coins and the earlier answers; always accepts the honest trace and oracle
 of every \emph{admissible} instance (one consistent with $Z$); and makes in expectation at most $q$
-queries that meet the target layer. It \emph{touches} neuron $u$ if some query has $u\in S_\sigma$.
+probes that meet the target layer. It \emph{touches} neuron $u$ if some probe has $u\in S_\sigma$.
 \end{definition}
 
-\noindent Row-wise openings have $d=1$ if they hide unopened rows (Remark~\ref{rem:merkle}).
-Folded rows, the code columns of Section~\ref{sec:defence} and succinct arguments over the layer
-have support $[N]$, so SNARK-assisted verifiers fall outside every class with $d<N$. We measure $q$
+\noindent Row-wise openings have $d=1$ if they hide unopened rows (Remark~\ref{rem:merkle}). A
+prover message checked against the commitment counts as a probe whose support is the rows the
+honest message depends on, so folded rows, the code columns of Section~\ref{sec:defence} and
+succinct arguments over the layer have support $[N]$, and SNARK-assisted verifiers fall outside
+every class with $d<N$. We measure $q$
 under the reference oracle $R_p$ of Definition~\ref{def:H}, which matches the real run until the
 edited neuron is touched.
 
@@ -83,30 +87,30 @@ Let $J$ be the neuron that the adversary edits, and suppose that the rows other 
 information about $J$ beyond the view (condition~(H) of Definition~\ref{def:H}; it holds, for
 example, when the rows are independent and the adversary chooses $J$ from the values $h$ alone).
 Then every $V\in\mathrm{Spot}_d(q)$ rejects an explainable single-site forgery with probability at
-most
+most $G_{qd}$, for integer $qd$ the chance of guessing $J$ in $qd$ tries from the view alone:
 \[
-  G_{qd}(J\mid P) \;=\; \mathbb E_{p}\Big[\max_{\substack{x\in[0,1]^N\\ \sum_ux_u\le qd}}\ \sum_ux_u\Pr[J=u\mid P=p]\Big],
+  G_{qd}(J\mid P) \;=\; \mathbb E_{p}\Big[\max_{\substack{\xi\in[0,1]^N\\ \sum_u\xi_u\le qd}}\ \sum_u\xi_u\Pr[J=u\mid P=p]\Big].
 \]
-which for integer $qd$ is the probability of guessing $J$ in $qd$ tries from the view alone. For
+For
 $d=1$ and integer $q$, a verifier that knows the adversary's strategy attains it by opening the
 $q$ neurons most likely to have been edited.
 \end{theorem}
 
 \begin{proof}[Proof idea]
-Until a query touches $J$, the answers equal those under the explanation, so $V$ runs as on an
-honest admissible instance and accepts. By~(H), the probability $x_u$ that $V$ touches $u$ does
-not depend on whether $J=u$, and $\sum_u x_u\le qd$. Detection is thus a fractional knapsack worth
+Until a probe touches $J$, the answers equal those under the explanation, so $V$ runs as on an
+honest admissible instance and accepts. By~(H), the probability $\xi_u$ that $V$ touches $u$ does
+not depend on whether $J=u$, and $\sum_u \xi_u\le qd$. Detection is thus a fractional knapsack worth
 at most $G_{qd}$ (Appendix~\ref{app:attack}).
 \end{proof}
 
 \noindent Condition~(H) is needed: a row that stores the location of the critical neuron lets two
-adaptive queries catch the edit (Remark~\ref{rem:pointer}). For trained networks, whose rows are
-correlated, we rely on the worst case (Section~\ref{sec:dichotomy}). With independent rows,
-reading values helps only against improbable values or a concentrated choice of neuron
-(Corollary~\ref{cor:surprise}). The unconstrained edit on the MNIST MLP writes improbable values:
-ranking the layer's neurons by the distance of each claimed value from the neuron's held-out mean
-puts the edited one first for \LocatorOne{}\% and \LocatorTwo{}\% of
-\LocatorQueries{} test queries in the two hidden layers, against $1/N$ of 0.2\% and 0.4\%.
+adaptive probes catch the edit (Remark~\ref{rem:pointer}). For trained networks, whose rows are
+correlated, we rely on the worst case (Section~\ref{sec:dichotomy}). With independent rows, reading values helps only
+against improbable values or a concentrated choice of neuron (Corollary~\ref{cor:surprise}), and
+the unconstrained MNIST edit writes improbable values: ranking neurons by the distance of each
+claimed value from its held-out mean puts the edited one first for \LocatorOne{}\% and
+\LocatorTwo{}\% of \LocatorQueries{} test queries in the two hidden layers (uniform guess: 0.2\%
+and 0.4\%).
 
 \subsection{Lower and Upper Bounds}
 \label{sec:dichotomy}
@@ -118,17 +122,17 @@ spot-checking verifier.
 \label{thm:dich}
 Consider verifiers that read each layer's weights through a commitment of locality $d$ that
 reveals nothing about unopened rows and keep no state between proofs, and let $q$ be the expected
-number of queries that meet a layer of width $N$.
+number of probes that meet a layer of width $N$.
 (a)~\emph{Spot-checking.} For every such verifier there is a ReLU network with a hidden layer of
 width $N$, and a single-site forgery with every value in its natural range, that the verifier
 accepts with probability at least $1-qd/N$, even if it knows the later weights, all natural
 ranges and the natural distribution of each neuron of that layer. Soundness error at most
 $\varepsilon$ on every such
-network thus requires $qd\ge(1-\varepsilon)N$, whatever the sampler; a path makes one query with $d=1$ per layer.
+network thus requires $qd\ge(1-\varepsilon)N$, whatever the sampler.
 (b)~\emph{Mixing.} For the verifier of Section~\ref{sec:defence}, whose folded rows and code columns
 each mix all rows ($d=N$), under the conditions of Proposition~\ref{prop:amp} and $n\ge2(k-1)$,
-$O(\lambda+\log L)$ queries per layer give soundness error $2^{-\lambda}$ for a network of $L$
-weight layers. For $L\le2^{\lambda}$ this is $O(\lambda)$, so $qd=O(\lambda)N$ suffices.
+$O(\lambda+\log L)$ probes per layer give soundness error $2^{-\lambda}$ for a network of $L$
+weight layers. For $L\le2^{\lambda}$ this is $O(\lambda)$ probes per layer, independent of $N$.
 \end{theorem}
 
 \begin{proof}[Proof idea]
@@ -140,10 +144,11 @@ the view depends on $\sigma$, so Theorem~\ref{thm:guess} bounds detection by $qd
 (Proposition~\ref{prop:amp}).
 \end{proof}
 
-\para{What the bounds mean.} In the worst case nothing beats uniform sampling, with which $2^{-40}$ takes about
-$27.7N$ paths per query. At any block size $d$, opening $q$ uniform blocks of $d$ rows attains the bound $1-qd/N$
-of~(a) ($d\mid N$) but downloads $qd$ rows, while encoding and committing each block of $d$ rows on
-its own keeps the error of~(b) with $O(\lambda+\log L)$ queries per block. We do not claim that
+\para{What the bounds mean.} In the worst case nothing beats uniform sampling; a path makes one
+probe with $d=1$ per layer, so $2^{-40}$ takes about $27.7N$ paths per query. Larger blocks do
+not help sampling: opening $q$ uniform blocks of $d$ rows attains the bound $1-qd/N$ of~(a)
+($d\mid N$) but downloads $qd$ rows. Encoding and committing each block on its own keeps the
+error of~(b) with $O(\lambda+\log L)$ probes per block. We do not claim that
 the instance of~(a) embeds in a transformer (Remark~\ref{rem:scope}).
 
 \begin{table*}[t]
@@ -221,33 +226,33 @@ the instance of~(a) embeds in a transformer (Remark~\ref{rem:scope}).
 \subsection{Measured Attacks}
 \label{sec:break}
 
-We attacked our implementation of the path protocol on an MNIST MLP (784--512--256--10), LeNet-5,
-VGG-11, VGG-16 and ResNet-18 on CIFAR-10, a 224$\times$224 dog-vs-cat ResNet-18 that stands in for
-the unreleased model of~\cite{anchuri2026verifiable}, and the real OPT-6.7B, computing path
+Single-site edits change the output on every model we attacked. We attacked our implementation of the path protocol on an MNIST MLP (784--512--256--10), LeNet-5,
+VGG-11, VGG-16 and ResNet-18 on CIFAR-10, a 224$\times$224 dog-vs-cat ResNet-18 standing in for
+the unreleased one of~\cite{anchuri2026verifiable}, and the real OPT-6.7B, computing path
 acceptance exactly. The implementation behaves as published: on MNIST versions of four of the authors'
 substitute-model settings, honest provers passed all \ReproRuns{} runs of each and substitute models were caught in
 \ReproCaught{}\% of runs.
 
-\para{MNIST.} One tampered neuron passes with the predicted probability $1-1/N$ (\MnistSinglePass{}\%);
+\para{MNIST.} One edited neuron passes with the predicted probability $1-1/N$ (\MnistSinglePass{}\%);
 the substitute models of Anchuri et al.\ corrupt hundreds of the MLP's 778 trace nodes, our
 forgeries \MnistForgeryNodes{}. A backdoor triggered by a $3{\times}3$ patch leaves clean queries unchanged,
 succeeds on every triggered query not already in the target class, and passed \MnistBackdoorPass{}\% of \MnistBackdoorRuns{}
 end-to-end runs (predicted: \MnistBackdoorPredicted{}\%).
 
-\para{Other samplers.} Uniform sampling detects \SamplerUniform{}\% of attacks. The contribution-weighted
+\para{Other samplers.} Against the best edit we found for it, no sampler we tried detects more
+than \FloorBest{}\%. Uniform sampling detects
+\SamplerUniform{}\% of edits. The contribution-weighted
 sampler, which steps to parent $i$ with probability $\propto|w_{ij}a_i|$, detects \SamplerContribution{}\% of
 the best single-neuron edits but never visits a neuron whose claimed activation is zero:
 zeroing about \ZeroingNeurons{} of the 512 neurons flips the prediction and passed \ZeroingAccepts{} of \ZeroingRuns{} runs. A
-floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches \FloorBest{}\% at $\delta=1$. The detection of the
-best attack we found bounds what a sampler guarantees: at most \FloorBest{}\% for each of ours.
-Against an adversary that knows the sampler, keeps
+floor $\delta$, sampling by $|w_{ij}|(|a_i|+\delta)$, reaches \FloorBest{}\% at $\delta=1$. Against an adversary that knows the sampler, keeps
 every edited value within held-out ranges and adapts its edit, the best per-path mixture of the
 implementable samplers (linear programming with a double oracle) detects at most \MixtureLayerOne{}\% and
 \MixtureLayerTwo{}\% per path in the two hidden layers, below the $27.7/N$ (5.4\% and 10.8\%) at
 which $2^{-40}$ would need fewer than $N$ paths.
 
 \para{Larger models.} On every CNN and test query, including the binary dog-vs-cat ResNet-18, one
-changed penultimate neuron flips the prediction and is caught by a path with probability \CnnPathLenet{}
+edited penultimate neuron flips the prediction and is caught by a path with probability \CnnPathLenet{}
 (LeNet-5) to \CnnPathMax{} (VGG, ResNet). Reaching $2^{-40}$ takes
 \CnnPathsRange{} paths, which open the whole model and trace, and at least \PathsLlama{} in the FFN
 layers of Llama-2-7B (width \WidthLlama{}), about \OpenAllLlama{}\,GB of fp16 openings at 64 tokens.
@@ -256,21 +261,22 @@ layers of Llama-2-7B (width \WidthLlama{}), about \OpenAllLlama{}\,GB of fp16 op
 token for \AttackOptLSucceeded{} of \AttackOptLPrompts{} prompts (95\% Wilson interval: \AttackOptLWilson{}\%). A fixed-target backdoor, limited by the final LayerNorm, succeeds
 for ``\texttt{back}'' (\AttackOptLBackdoorBack{}, clean prompts unchanged) and fails for ``\texttt{hacked}'' (\AttackOptLBackdoorHacked{}).
 These edits leave the natural ranges, which the path protocol does not check; $2^{-40}$ needs
-at least \AttackOptLPaths{} paths. Range checks do not stop the edit. Against per-neuron ranges calibrated on
-held-out text (\InrangeCalibTokens{} tokens of WikiText-2 train), edits that keep every value in range change the
+at least \AttackOptLPaths{} paths.
+
+\para{In-range edits.} Range checks do not stop the edit. Against held-out ranges, calibrated on
+\InrangeCalibTokens{} tokens of WikiText-2 train, edits that keep every value in range change the
 next token of OPT-1.3B for \InrangeChanged{} prompts at each of layers 6, 12, 18 and 23, with a median of \InrangeKMedian{}
 neurons (at most \InrangeKMax{}); a path opens them with median probability at most \InrangePMedianMax{} at every
 layer (at most \InrangePMax{}). Edits that only lower activations, which a contribution-weighted
 sampler of the claimed trace never opens, succeed for \InrangeDown{} of the \InrangePrompts{} prompts at those
-layers, with a median of \InrangeDownKMedian{} neurons. Value-aware sampling does help against these
+layers, with a median of \InrangeDownKMedian{} neurons. On OPT-6.7B, in-range edits change the next
+token for \InrangeOptLChanged{} prompts at every layer, and a path opens them with median
+probability at most \InrangeOptLPMedianMax{}. Value-aware sampling does help against the OPT-1.3B
 edits, which are not adapted to the sampler: with the natural maximum as the range, the best
 per-path mixture of our samplers catches the less detectable of the two edits on \GameLayerSix{}\%, \GameLayerTwelve{}\% and \GameLayerEighteen{}\% of
 the paths that enter the FFN of layers 6, 12 and 18 (mean over prompts), above $27.7/N$ (\GameThreshold{}\%),
 and on \GameLayerTwentyThree{}\% at layer 23 (uniform: \GameUniform{}\%).
-Whether an edit adapted to the sampler evades it, as on the MLP, we leave open. On OPT-6.7B
-(layers 8, 16, 24 and 31), in-range edits change the next
-token for \InrangeOptLChanged{} prompts at every layer, and a path opens them with median probability at most
-\InrangeOptLPMedianMax{}.
+Whether an edit adapted to the sampler evades it, as on the MLP, we leave open.
 
 \subsection{Systematisation of Spot-Checking Schemes}
 \label{sec:sok}
@@ -280,7 +286,7 @@ In every scheme of Table~\ref{tab:sok}, a single-site edit is caught only when t
 it, and no other value-blind sample of the same size does better against every edit
 placement (Proposition~\ref{prop:blind}). SLP, CommitLLM,
 NanoZK and SPEX state probabilistic guarantees, and SLP and CommitLLM describe the
-edit-then-recompute strategy themselves~\cite{slp,commitllm2026}; we do not call them broken. Two
+edit-then-recompute strategy themselves~\cite{slp,commitllm2026}, so these guarantees hold. Two
 claims fail: the path protocol's full soundness for binary classifiers, on our dog-vs-cat
 ResNet-18, and \mbox{TensorCommitments'} goal of negligible soundness, as the provider can compute its
 weight-only layer selection. Selection by value is evaded by edits that write common values (our

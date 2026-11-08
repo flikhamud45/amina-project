@@ -6,19 +6,22 @@
 \section{Generation and Sampling}
 \label{sec:gen}
 
+Section~\ref{sec:defence} proves a forward pass over a prompt, but a response is generated token by
+token and often sampled. We prove it as one query and bind sampled tokens to the client's seed.
+
 \subsection{A Generated Response as One Prefill}
 \label{sec:gen-prefill}
 
-Proving each prefix of a generated response as its own query repeats the prompt: with $P=512$
-prompt and $G=512$ generated tokens, Llama-2-7B's mode-$\sC$ proofs would take about
-\GenPerPrefixTB{}\,TB, against \GenPrefillGB{}\,GB for the response as one prefill.
+Proving each prefix as its own query would repeat the prompt: with $P=512$ prompt and $G=512$
+generated tokens, Llama-2-7B's mode-$\sC$ proofs would take about \GenPerPrefixTB{}\,TB, against
+\GenPrefillGB{}\,GB as one prefill.
 
 \para{Reduction.} The response $y_1,\dots,y_G$ to a prompt $x$ is the greedy decoding if each
 $y_i$ is the first largest logit at position $P+i-1$ of the model run on
 $x\,\|\,y_1\cdots y_{i-1}$. Multipliers and tables are fixed at calibration and only causal
 attention mixes positions, so a decoder with a KV cache computes exactly the integers of a causal
 prefill of $s=x\,\|\,y_1\cdots y_{G-1}$. We prove one query on $s$, with $T=P+G-1$ positions and
-the LM head at the last $G$ positions; their number enters the graph digest (Section~\ref{sec:fs}).
+the LM head at the last $G$ positions; $G$ enters the graph digest (Section~\ref{sec:fs}).
 
 \para{Token rule.} The verifier also requires that, for each $i<G$, column $i$ of the claimed
 $V\times G$ logits ($V$ the vocabulary size) has its first largest entry at the next input token
@@ -32,13 +35,13 @@ the $Q$ queries.
 
 \para{Cost.} Each matrix is opened and folded once per response, so the proof grows only by the
 claims of the new positions. In the setup of Section~\ref{sec:eval-setup} (full models), a greedy
-256-token Llama-2-7B response after a 512-token prompt takes \GenLlamaProveC{}\,s to prove, \GenLlamaVerifyC{}\,s to verify and
-\GenLlamaProofC{} in mode $\sC$, and \GenLlamaProveK{}\,s, \GenLlamaVerifyK{}\,s and \GenLlamaProofK{} in $\Kpre$; Qwen3-4B takes
+256-token Llama-2-7B response after a 512-token prompt takes \GenLlamaProveC{}\,s to prove and \GenLlamaVerifyC{}\,s to verify, with a
+\GenLlamaProofC{} proof, in mode $\sC$ (\GenLlamaProveK{}\,s, \GenLlamaVerifyK{}\,s and \GenLlamaProofK{} in $\Kpre$). Qwen3-4B takes
 \GenQwenProveC{}\,s, \GenQwenVerifyC{}\,s and \GenQwenProofC{} in $\sC$. Llama-2-7B's proof per generated token falls from
 \GenLlamaMBPerTokenShort{}\,MB at $G=64$ to \GenLlamaMBPerTokenLong{}\,MB at $G=256$, and sampled responses take
 within \GenSampledWithin{}\% of the greedy ones' times. For GPT-2 after a 64-token prompt, proving takes
-\GenGptMsPerToken{}\,ms per generated token; zkAgent reports 0.30\,s per token for GPT-2, on other hardware and
-with other guarantees~\cite{zkagent}. Times exclude decoding, after which the prover computes the trace of $s$. Every tampered response was rejected.
+\GenGptMsPerToken{}\,ms per generated token; zkAgent reports 0.30\,s, on other hardware and with other
+guarantees~\cite{zkagent}. Times exclude decoding. Every tampered response (\OutcomeTampersGen{}: wrong tokens, or logits forged for them) was rejected.
 
 \subsection{Sampled Generation}
 \label{sec:gen-sampling}
@@ -70,15 +73,15 @@ into the statement, stops the provider from trying seeds until it obtains a pref
 Convincing a third party that the seed was random would need a jointly generated seed (out of
 scope).
 
-\para{Distribution.} The sampler approximates sampling at temperature $\tau$ with uniform
-variables quantised to steps of $2^{-16}$. Since $\Gamma[i]/2^{16}$ lies in about
-$[-2.47,11.78]$, the sampler never draws a token whose temperature-scaled logit is more than about 14.25
-below the largest, which exact sampling draws with probability below $e^{-14.25}<6.5\cdot10^{-7}$.
-Over $V$ tokens the excluded probability is below $(V-1)e^{-14.25}$: about 0.02 for Llama-2,
-0.03 for GPT-2 and OPT and 0.1 for Qwen3. Computed exactly from the integer OPT-1.3B's logits at
-\TvPositions{} WikiText-2 positions, the sampler's median total-variation distance to
-$\mathrm{softmax}(cz/\tau)$ at $\tau=1$ is \TvTopK{} with $k=50$ and \TvFull{} with $k=0$, against
-\TvModel{} between the integer and the fp32 model's next-token distributions. The error comes from the
+\para{Distribution.} The sampler is close to exact sampling at temperature $\tau$. Computed exactly
+from the integer OPT-1.3B's logits at \TvPositions{} WikiText-2 positions, its median
+total-variation distance to $\mathrm{softmax}(cz/\tau)$ at $\tau=1$ is \TvTopK{} with $k=50$ and
+\TvFull{} with $k=0$, against \TvModel{} between the integer and the fp32 model's next-token
+distributions. It quantises the uniform variables to steps of $2^{-16}$. Since $\Gamma[i]/2^{16}$
+lies in about $[-2.47,11.78]$, it never draws a token whose temperature-scaled logit is more than
+about 14.25 below the largest; exact sampling draws such a token with probability below
+$e^{-14.25}<6.5\cdot10^{-7}$, so at most $(V-1)e^{-14.25}$ of the mass is excluded: about 0.02 for
+Llama-2, 0.03 for GPT-2 and OPT and 0.1 for Qwen3. The error comes from the
 rounding of $a$ and, with $k=0$, from the bounded upper tail of $\Gamma$, which under-samples tokens
 8 to 12 nats below a crowded top; a table of $2^{20}$ entries would lower it to \TvTwenty{}.
 Nucleus (top-$p$) sampling is not implemented.

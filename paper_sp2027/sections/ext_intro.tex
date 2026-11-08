@@ -16,7 +16,7 @@ inference.
 \para{Prover.} The prover is the protocol's strongest axis. On matched models it is
 \CompareProverMin{}--\CompareProverMax{}$\times$ faster than published zkSNARK provers
 (Table~\ref{tab:eval-compare})\TodoCompareRange{}. Part of this gap is hardware, since all of them
-but zkLLM ran on CPUs, and part is scope: they also prove the operations without weights, which our
+but zkLLM ran on CPUs, and part is scope: they also prove the weight-free operations, which our
 verifier recomputes, and many of them hide the weights. Without V1, the prover's folds and column
 openings grow with the model but not with the input length. Computing them with exact int8
 tensor-core products instead of float64 makes the prover \ImproveOpenRange{}$\times$ faster on

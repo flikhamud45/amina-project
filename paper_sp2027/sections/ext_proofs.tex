@@ -35,7 +35,7 @@ acceptance bound of the path protocol for edits of $k$ neurons. Each proof names
 the library \texttt{code/src/pvi} that it models.
 
 \para{Graphs.} A graph $\mathcal G$ is the ordered list of weight operations~\eqref{eq:weightop} and
-operations without weights of Section~\ref{sec:intmodel}, and $M_{\mathcal G}(x)$ is its output on
+weight-free operations of Section~\ref{sec:intmodel}, and $M_{\mathcal G}(x)$ is its output on
 the query $x$: the claims of its last weight operation, for a decoder the logits. Every statement
 about values is a statement about the integer semantics of Appendix~\ref{app:semantics}. That the
 optimised kernels compute these semantics (the int32 and int64 attention paths, the native CPU
@@ -47,7 +47,7 @@ or the label of the first check that failed (\texttt{range\_or\_shape}, \texttt{
 checks, \texttt{freivalds}, the column checks, and for V1 \texttt{cut\_exception},
 \texttt{cut\_multiplicities}, \texttt{cut\_gkr}, \texttt{kpre\_y}, \texttt{cut\_final},
 \texttt{cut\_logup}). We write $Q_V$ for the number of verdicts the prover obtains for one key of
-mode $\Kpre$, and $Q_H$, or $Q$ where no confusion arises, for the number of its random-oracle
+mode $\Kpre$, and $Q_H$ for the number of its random-oracle
 queries. Unless stated otherwise, nothing else that depends on the verifier's secrets, such as its
 running time, reaches the prover (Remark~\ref{rem:stateful}).
 
@@ -184,9 +184,9 @@ depends only on the weights and on the input bound of the operation, which are t
 graphs.
 (c)~The proofs of the three theorems (Appendices~\ref{app:sound}, \ref{app:untrusted}
 and~\ref{app:v1}) use only that the graph consists of weight operations~\eqref{eq:weightop},
-committed as in Section~\ref{sec:commit}, and of public deterministic operations without weights
+committed as in Section~\ref{sec:commit}, and of public deterministic weight-free operations
 that the verifier recomputes, together with the setup bound. The pruned graph is such a graph: the
-slices are operations without weights, and the graph digest of Section~\ref{sec:fs} describes them
+slices are weight-free operations, and the graph digest of Section~\ref{sec:fs} describes them
 (\texttt{IntGraph.digest} hashes every operation's name, inputs, output, note, function and
 constants, and the graph's \texttt{meta}), so the statements of the two graphs differ under
 Fiat--Shamir. The theorems therefore hold for $\mathcal G^{(n)}_{\mathrm{pr}}$, and by~(a) the event
@@ -418,12 +418,12 @@ the implementation (v0 in mode $\sC$ or $\sK$, with or without the compact encod
 public-coin part of V1) with $k$ challenge rounds and round-by-round error
 $\varepsilon_{\mathrm{rbr}}=\max_i\varepsilon_i$, and let $\mathrm{FS}(\Pi)$ be its non-interactive
 form with the transcript above, which absorbs the statement first. Fix the graph. For every prover
-that makes at most $Q$ oracle queries and outputs a statement on this graph and a proof, the probability that the statement is
+that makes at most $Q_H$ oracle queries and outputs a statement on this graph and a proof, the probability that the statement is
 false and the verifier accepts is at most
 \[
-  (Q+k)\,\varepsilon_{\mathrm{rbr}}+N^2\,2^{-256},
+  (Q_H+k)\,\varepsilon_{\mathrm{rbr}}+N^2\,2^{-256},
 \]
-where $N=Q+Q_{\mathrm{ver}}$ and $Q_{\mathrm{ver}}$ is the number of oracle queries the verifier
+where $N=Q_H+Q_{\mathrm{ver}}$ and $Q_{\mathrm{ver}}$ is the number of oracle queries the verifier
 makes on the proof (leaves, keys and expansions).
 \end{theorem}
 
@@ -459,13 +459,13 @@ $K\|\cdot$ was queried before $K$ was output, so the expanded challenge is unifo
 independent of all earlier answers; the challenges of one round, drawn under distinct labels from
 the same transcript string, are independent for the same reason.
 As in the reduction behind (R3), the prover's queries thus induce a state-restoration prover for
-$\Pi$ with at most $Q$ moves: the first query on a challenge input $w$ whose components are resolved
+$\Pi$ with at most $Q_H$ moves: the first query on a challenge input $w$ whose components are resolved
 makes the move $\tau(w)$, whose answer fixes all challenges of that round at once (queries for the
 other labels of the round make the same move), and the oracle's answers on $w$ and on the expansion
 inputs are sampled jointly with that challenge; the remaining queries are answered with fresh
 randomness that no accepted proof uses. The verifier's own key queries on the final proof add at
 most $k$ moves. By (R2) a false statement is then accepted with probability at most
-$(Q+k)\,\varepsilon_{\mathrm{rbr}}$, which with $\Pr[E_0\cup E_1\cup E_2]$ gives the bound.
+$(Q_H+k)\,\varepsilon_{\mathrm{rbr}}$, which with $\Pr[E_0\cup E_1\cup E_2]$ gives the bound.
 \end{proof}
 
 \begin{corollary}[v0 under Fiat--Shamir]
@@ -473,16 +473,16 @@ $(Q+k)\,\varepsilon_{\mathrm{rbr}}$, which with $\Pr[E_0\cup E_1\cup E_2]$ gives
 For v0 in mode $\sC$, with the state function of Appendix~\ref{app:sound}, $k=2$ (the vectors
 $\chi,\chi'$, then the columns) and
 $\varepsilon_{\mathrm{rbr}}=\max\big(p^{-r},\max_j\prod_{i<t_j}\tfrac{k_j-1-i}{n_j-i}\big)\le
-\varepsilon_{\sC}$, so a prover with $Q$ queries succeeds with probability at most
-$(Q+2)\,\varepsilon_{\sC}+N^2\,2^{-256}$. For V1, $\varepsilon_{\mathrm{rbr}}$ is the largest of
+\varepsilon_{\sC}$, so a prover with $Q_H$ queries succeeds with probability at most
+$(Q_H+2)\,\varepsilon_{\sC}+N^2\,2^{-256}$. For V1, $\varepsilon_{\mathrm{rbr}}$ is the largest of
 these terms and of the per-round errors of Appendix~\ref{app:v1}, $(\Nleaf+|\Vtab|)/(p^8-p^2)$,
 $2/p^8$ and $3/p^8$, where a round holds the challenges drawn from one transcript string: the
 implementation draws $\theta_{k-1}$ and $\eta_k$ of a GKR instance together, and $\alpha$ with the
 vectors $\chi$ of the clear operations.
 \end{corollary}
 
-\noindent The bound of Section~\ref{sec:fs}, $Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$, is this
-bound with the verifier's $k$ key queries counted in $Q$. At $Q=2^{64}$ the term
+\noindent The bound of Section~\ref{sec:fs}, $Q_H\varepsilon_{\mathrm{rbr}}+O(Q_H^22^{-256})$, is this
+bound with the verifier's $k$ key queries counted in $Q_H$. At $Q_H=2^{64}$ the term
 $N^2\,2^{-256}$ is about $2^{-128}$, as large as the target, because keys and leaves have 32 bytes;
 a collision in the SHA-256 Merkle trees, which Theorems~\ref{thm:sound} and~\ref{thm:untrusted}
 exclude, has probability of the same order (Remark~\ref{rem:rbr-max}).
@@ -595,7 +595,7 @@ $\Pi_{\mathrm{wire}}$ is a function of the decoded messages. Hence the bounds of
 \ref{thm:untrusted} and~\ref{thm:v1}, including the reuse bounds of mode $\Kpre$, hold for
 $\Pi_{\mathrm{wire}}$.
 (b)~$\Pi_{\mathrm{wire}}$ has the same per-round errors as $\Pi$, so Theorem~\ref{thm:fstree} gives
-it the Fiat--Shamir bound of $\Pi$, where $Q$ counts every oracle query, including those spent on
+it the Fiat--Shamir bound of $\Pi$, where $Q_H$ counts every oracle query, including those spent on
 other encodings of the same values. Non-canonical encodings add no term.
 \end{theorem}
 
@@ -620,7 +620,7 @@ $b_1,\dots,b_i$ that decode, the next challenge is uniform and independent of $b
 of the decoded messages, so it leaves the doomed set with probability at most $\Pi$'s per-round
 error. Theorem~\ref{thm:fstree} applies, since the absorbed bytes (or decoded GKR values) determine
 the decoded messages. An encoding of the same values with other bytes is a different partial
-transcript, and querying its challenge is one more oracle query, counted in $Q$ exactly like any
+transcript, and querying its challenge is one more oracle query, counted in $Q_H$ exactly like any
 other change of the prover's message.
 \end{proof}
 
@@ -681,7 +681,7 @@ In v0 the challenge of the vectors leaves a doomed state with probability at mos
 only the matrix of the first wrong operation matters, and the column challenge with probability at
 most $\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)$, since every doomed matrix must escape on its own. So
 $\varepsilon_{\mathrm{rbr}}$ is the maximum of these terms, not their sum $\varepsilon_{\sC}$, and
-the Fiat--Shamir bound is $(Q+k)\,\varepsilon_{\mathrm{rbr}}$ by (R2). Interactively, (R1) gives
+the Fiat--Shamir bound is $(Q_H+k)\,\varepsilon_{\mathrm{rbr}}$ by (R2). Interactively, (R1) gives
 $p^{-r}+\max_j\prod_{i<t_j}(k_j-1-i)/(n_j-i)$; the sum over $\mathcal J$ in
 Theorem~\ref{thm:sound} is an upper bound, which is not needed because the first wrong operation,
 and with it the matrix $j$, is fixed before any challenge.
@@ -689,15 +689,15 @@ The parameters do not use the maximum. \texttt{params\_for} sets
 $\beta=\lambda+\log_2(2n_{\mathrm{op}})$, plus 64 under Fiat--Shamir (\texttt{plans.column\_bits}),
 with $n_{\mathrm{op}}\ge|\mathcal J|$ the number of weight operations, and makes every term at most
 $2^{-\beta}$; this meets the sum-form bounds $\varepsilon_{\sC}\le2^{-\lambda}$ and, for
-$Q\le2^{64}$, $Q\varepsilon_{\sC}\le2^{-\lambda}$. With the maximum, $(Q+k)\,2^{-\beta}\le2^{-\lambda}$
-needs only $\beta=\lambda+65$ for $Q+k\le2^{65}$. For Llama-2-7B ($n_{\mathrm{op}}=226$) at
+$Q_H\le2^{64}$, $Q_H\varepsilon_{\sC}\le2^{-\lambda}$. With the maximum, $(Q_H+k)\,2^{-\beta}\le2^{-\lambda}$
+needs only $\beta=\lambda+65$ for $Q_H+k\le2^{65}$. For Llama-2-7B ($n_{\mathrm{op}}=226$) at
 $\lambda=128$ this would lower $\beta$ from $200.8$ to $193$, leave
 $r=\lceil193/\log_2p\rceil=7$ unchanged, and lower each $t_j$ by about 4\%, since $t_j$ grows about
 linearly with $\beta$. We keep the conservative parameters. Neither choice covers the collision term
-$N^2\,2^{-256}$ of Theorem~\ref{thm:fstree}, which is about $2^{-128}$ at $Q=2^{64}$; the total
-Fiat--Shamir error at that $Q$ therefore exceeds $2^{-128}$, slightly with the conservative
+$N^2\,2^{-256}$ of Theorem~\ref{thm:fstree}, which is about $2^{-128}$ at $Q_H=2^{64}$; the total
+Fiat--Shamir error at that $Q_H$ therefore exceeds $2^{-128}$, slightly with the conservative
 parameters ($2^{-128}+2^{-136.8}$) and by half with $\beta=\lambda+65$ ($2^{-128}+2^{-129}$), and
-$2^{-128}$ holds for $Q\le2^{63}$ with either.
+$2^{-128}$ holds for $Q_H\le2^{63}$ with either.
 \end{remark}
 
 \subsection{V1 in Mode \texorpdfstring{$\Kpre$}{Kpre}}

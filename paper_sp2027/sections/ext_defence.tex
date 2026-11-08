@@ -15,7 +15,7 @@ follows. Convolutions become products through im2col, with one column of $X_\ell
 BatchNorm is folded into $W_\ell$ and $b_\ell$, and the scales of the weights are absorbed into the
 integer multiplier of the next requantisation. A requantisation with multiplier $m$ computes
 $\mathrm{clamp}(\lfloor(mz+2^{29})/2^{30}\rfloor,-127,127)$; Appendix~\ref{app:semantics} gives
-every other operation without weights.
+every other weight-free operation.
 
 For a language model the output $y$ is the vector of next-token logits. These depend only on the
 last position, so the last block is computed there alone, except for the keys and values that
@@ -61,7 +61,7 @@ squeezed from a copy of the sponge after it absorbs the challenge's label. Rejec
 expands it into unbiased field elements and distinct column indices. Two models that differ in one
 requantisation multiplier have different graph digests and thus produce different challenges. A
 prover that rehashes altered claims in search of favourable challenges is covered by the factor
-$Q$ of the Fiat--Shamir bound of Section~\ref{sec:fs}; the round-by-round states are defined in
+$Q_H$ of the Fiat--Shamir bound of Section~\ref{sec:fs}; the round-by-round states are defined in
 Appendix~\ref{app:sound}.
 
 \subsection{Untrusted Commitments: Measurements, Trade-off and Scope}

@@ -47,7 +47,7 @@ failure and runs the token rule (D3) on the decoded claims before (D1) and (D2).
 (D1)~Ranges: $a \in [-127, 127]$, $\Delta \in R_\Delta = [\Vshift_\ell(1 - 2^{29}),
 \Vshift_\ell(2^{29} - 1)]$, $|z| < 2^{29}$ for clear claims, and a bound on the inputs of cut
 operations (defence in depth only).
-(D2)~Derivation: every operation without weights is recomputed; the consumer of a cut operation
+(D2)~Derivation: every weight-free operation is recomputed; the consumer of a cut operation
 reads $s_\ell$.
 (D3)~The token rule on the claims of the LM head.
 (D4)~Exceptions: each listed entry belongs to a cut requantisation, the indices increase strictly

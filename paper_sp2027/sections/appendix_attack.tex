@@ -5,10 +5,10 @@
 with int8 or fp16 values. Site $i$ has value $h_i=f_i(\theta_i)$, for example
 $f_i(\theta_i)=\phi(w_i\cdot a+b_i)$ with $a$ the layer's input on $x$. The honest trace is
 $\tau(\theta)$. The view is $P=(x,Z,\tau')$, and $\mathcal A$ is the set of admissible instances,
-those consistent with $Z$. A verifier $V\in\mathrm{Spot}_d(q)$ makes queries to a commitment oracle
+those consistent with $Z$. A verifier $V\in\mathrm{Spot}_d(q)$ makes probes to a commitment oracle
 $\Sigma(\theta)$ of locality $d$, chosen adaptively. It accepts $(\tau(\theta),\Sigma(\theta))$ for
 every $\theta\in\mathcal A$ and every coin string (completeness), and the expected number of its
-queries that meet the target layer is at most $q$ (under each reference oracle $R_p$ below). The
+probes that meet the target layer is at most $q$ (under each reference oracle $R_p$ below). The
 adversary is a randomised rule $A$ that sees $\theta$ and outputs a pair $(u,v)$ with $v\neq h_u$,
 or $\bot$. Its forgery is $\tau'=\tau$ with $h_u$ replaced by $v$ and every later layer recomputed
 with the true weights. We write $J$ for the random edited site, and we condition throughout on
@@ -33,8 +33,8 @@ In the ideal-oracle model, if a forgery at $u$ is explainable, then every $V\in\
 accepts it on every run that does not touch $u$.
 \end{lemma}
 \begin{proof}
-Fix the coins. While no query touches $u$, the answers $\gamma_\sigma(\theta_{S_\sigma})$ and
-$\gamma_\sigma(\theta'_{S_\sigma})$ coincide. By induction on the queries, the run on
+Fix the coins. While no probe touches $u$, the answers $\gamma_\sigma(\theta_{S_\sigma})$ and
+$\gamma_\sigma(\theta'_{S_\sigma})$ coincide. By induction on the probes, the run on
 $(P,\Sigma(\theta))$ therefore equals the run on $(P,\Sigma(\theta'))$. The latter is an honest run
 of $\theta'\in\mathcal A$, which $V$ accepts by completeness.
 \end{proof}
@@ -44,12 +44,12 @@ of $\theta'\in\mathcal A$, which $V$ accepts by completeness.
 The pair (prior, $A$) satisfies (H) if for every view $p$ there is an oracle $R_p$, which may be
 sampled lazily, with the following property. For every $u$ with $\Pr[J=u\mid P=p]>0$ and every
 verifier, the run of $V$ under $\Sigma(\theta)\mid(P=p,J=u)$, up to and including the
-\emph{choice} of its first query that touches $u$ (but not that query's answer), has the same law
+\emph{choice} of its first probe that touches $u$ (but not that probe's answer), has the same law
 as under $R_p$.
 \end{definition}
 
-\noindent For $t\ge0$ let $G_t(J\mid P)=\mathbb E_p\max\{\sum_u x_u\Pr[J=u\mid P=p] :
-x\in[0,1]^N,\ \sum_u x_u\le t\}$. For integer $t$ this is the expected total of the $t$ largest
+\noindent For $t\ge0$ let $G_t(J\mid P)=\mathbb E_p\max\{\sum_u \xi_u\Pr[J=u\mid P=p] :
+\xi\in[0,1]^N,\ \sum_u \xi_u\le t\}$. For integer $t$ this is the expected total of the $t$ largest
 posteriors.
 
 \begin{theorem}[full form of Theorem~\ref{thm:guess}]
@@ -60,18 +60,18 @@ every $V\in\mathrm{Spot}_d(q)$ satisfies
   \Pr[V\text{ rejects}] \;\le\; G_{qd}(J\mid P)\;\le\; qd\cdot 2^{-\tilde H_\infty(J\mid P)} ,
 \]
 where $\tilde H_\infty$ is average min-entropy~\cite{dodis2008fuzzy}. Under the second commitment
-condition of Remark~\ref{rem:merkle}, add $2Q2^{-\kappa}+Q^22^{-\ell_H}$. For $d=1$ and integer $q$,
+condition of Remark~\ref{rem:merkle}, add $2Q_H2^{-\kappa}+Q_H^22^{-\ell_H}$. For $d=1$ and integer $q$,
 a verifier that knows the prior and $A$, and has a binding commitment, attains the bound with
 equality.
 \end{theorem}
 \begin{proof}
 By Lemma~\ref{lem:notouch},
 $\Pr[\text{reject}]\le\sum_p\Pr[p]\sum_u\Pr[u\mid p]\Pr[V\text{ touches }u\mid p,u]$. Whether $V$
-touches $u$ is determined by its run up to the choice of the first query that touches $u$. By (H),
-$\Pr[V\text{ touches }u\mid p,u]=\Pr_{R_p}[V\text{ touches }u]=:x_u$, and $x$ does not depend on
-$u$. Under $R_p$, $V$ touches at most $d$ sites per query that meets the layer, so
-$\sum_u x_u\le qd$ and $x\in[0,1]^N$. Hence $\sum_u\Pr[u\mid p]x_u$ is at most the value of the
-fractional knapsack $\max\{\sum_u x_u\Pr[u\mid p]:\sum_u x_u\le qd\}$, which averages to
+touches $u$ is determined by its run up to the choice of the first probe that touches $u$. By (H),
+$\Pr[V\text{ touches }u\mid p,u]=\Pr_{R_p}[V\text{ touches }u]=:\xi_u$, and $\xi$ does not depend on
+$u$. Under $R_p$, $V$ touches at most $d$ sites per probe that meets the layer, so
+$\sum_u \xi_u\le qd$ and $\xi\in[0,1]^N$. Hence $\sum_u\Pr[u\mid p]\xi_u$ is at most the value of the
+fractional knapsack $\max\{\sum_u \xi_u\Pr[u\mid p]:\sum_u \xi_u\le qd\}$, which averages to
 $G_{qd}(J\mid P)$. The second inequality bounds each of the $qd$ terms by the largest posterior,
 and $\mathbb E_p\max_u\Pr[u\mid p]=2^{-\tilde H_\infty(J\mid P)}$. For tightness, the verifier that
 opens the $q$ sites with the largest posteriors accepts honest traces. On a forgery it rejects
@@ -138,7 +138,7 @@ Natural inputs are uniform over $\mathbf 1$ and the $N$ vectors with one zero, w
 coordinate $0$. Then for every $V\in\mathrm{Spot}_d(q)$ that knows the later weights, all natural
 ranges and the natural distribution of every hidden neuron,
 $\mathbb E_{\sigma,r}\Pr[V\text{ accepts}]\ge1-qd/N$ in the ideal-oracle model, and
-$\ge1-qd/N-2Q2^{-\kappa}-Q^22^{-\ell_H}$ for an unsalted Merkle tree with $\ell_H$-bit hashes and $Q$
+$\ge1-qd/N-2Q_H2^{-\kappa}-Q_H^22^{-\ell_H}$ for an unsalted Merkle tree with $\ell_H$-bit hashes and $Q_H$
 hash evaluations by $V$. In particular, for each such $V$ some $(\sigma,r)$ attains the bound, and
 the law of $(\sigma,r)$ does not depend on $V$.
 \end{proposition}
@@ -152,7 +152,7 @@ an admissible instance whose honest trace is $\tau'$, so the forgery is explaina
 $R_p$ give each newly touched row a uniform unused element of $[N]\setminus\{\zeta\}$, or $\zeta$
 once none is left, and fresh $r$. Given $J=u$, the other $N-1$ rows form a uniform bijection onto
 $[N]\setminus\{\zeta\}$ with independent $r$, so revealing them one at a time has the law of $R_p$;
-a run touches only these rows before its first query that touches $u$. $J$ is uniform given the
+a run touches only these rows before its first probe that touches $u$. $J$ is uniform given the
 view, so Theorem~\ref{thm:guess-full} gives detection at most $qd/N$. For the Merkle tree, apply
 Remark~\ref{rem:merkle}: each leaf preimage, under the true rows and under the explanation, has
 min-entropy at least $\kappa$ given the view and the other leaves.
@@ -207,15 +207,15 @@ check, the $t$ opened columns of $N$ entries for each fold, and one encoding per
 
 \begin{proof}[Proof of Theorem~\ref{thm:dich}]
 (a)~Proposition~\ref{prop:worst} gives acceptance at least $1-qd/N$ for a commitment that hides
-unopened rows. For an unsalted Merkle tree it gives $1-qd/N-2Q2^{-\kappa}-Q^22^{-\ell_H}$, where the
+unopened rows. For an unsalted Merkle tree it gives $1-qd/N-2Q_H2^{-\kappa}-Q_H^22^{-\ell_H}$, where the
 term in $\kappa$ can be made as small as desired. If the soundness
 error is at most $\varepsilon$ on every such network, then $1-qd/N\le\varepsilon$, that is,
 $qd\ge(1-\varepsilon)N$. A path visits one node of the target layer and opens that node's row, so
-$s$ paths make $s$ queries there with $d=1$.
+$s$ paths make $s$ probes there with $d=1$.
 (b)~Set $\beta=\lambda+\log_2(2L)$ in Proposition~\ref{prop:amp}. Each layer then passes a wrong
 claim with probability at most $2^{1-\beta}=2^{-\lambda}/L$, and a union bound over the $L$ layers,
 as in the soundness theorem of Section~\ref{sec:defence}, gives $2^{-\lambda}$. Each layer uses
-$r+t=O(\beta)=O(\lambda+\log L)$ queries of support $N$, since $n\ge2(k-1)$ gives $t\le\beta+1$.
+$r+t=O(\beta)=O(\lambda+\log L)$ probes of support $N$, since $n\ge2(k-1)$ gives $t\le\beta+1$.
 \end{proof}
 
 \noindent Part~(a) is the one-sided randomised query complexity of $\mathrm{OR}_N$ with $d$-row
@@ -253,7 +253,7 @@ where $\enc$ encodes each row of $u_b$.
 
 \noindent Under Fiat--Shamir the challenges are derived in the same order
 (Remark~\ref{rem:block-scope}). We write $u_{b,\rho}$ for row $\rho$ of $u_b$. As
-Proposition~\ref{prop:amp} does, we count one query per folded row $u_{b,\rho}$ and one per opened
+Proposition~\ref{prop:amp} does, we count one probe per folded row $u_{b,\rho}$ and one per opened
 column.
 
 \begin{proposition}[block mixing]
@@ -284,7 +284,7 @@ is linear, so $\chi_b^\T\hat A_b=\enc(\chi_b^\T A_b)=\enc(u_b)$, and~\eqref{eq:b
 honest multiproofs verify. The honest $u_{b,\rho}$ is a combination of the rows in $\mathcal B_b$.
 Every entry of $\hat A_{b,c}$ is the encoding of one such row at one point. A multiproof in $T_b$
 consists of hashes of other leaves of $T_b$, which are functions of columns of $\hat A_b$ and of
-salts. So every query has its support in $\mathcal B_b$, a set of at most $d$ rows, and for a prover
+salts. So every probe has its support in $\mathcal B_b$, a set of at most $d$ rows, and for a prover
 message this is the support that Definition~\ref{def:spot} assigns to it. There are $mr$ folded rows
 and $mt$ opened columns, and $md=d\lceil N/d\rceil\le N+d-1$.
 
@@ -355,10 +355,10 @@ Let $1\le d\le N$ and $\beta=\lambda+\log_2(2L)$. Consider an integer network wi
 lookups, with $L$ weight operations, that meets the range bound of Section~\ref{sec:intmodel}, and an
 honest $C_M$. Run $V_{\mathrm{blk}}$ on each operation $\ell$, with $r$ and
 $t_\ell=\min(\lceil\beta/\log_2(n_\ell/(k_\ell-1))\rceil,k_\ell)$ as in
-Proposition~\ref{prop:block}(iii) and $n_\ell\ge2(k_\ell-1)$; the verifier recomputes the operations
-without weights.
+Proposition~\ref{prop:block}(iii) and $n_\ell\ge2(k_\ell-1)$; the verifier recomputes the weight-free
+operations.
 (a)~The verifier accepts an output $y\neq M(x)$ with probability at most $2^{-\lambda}$, plus that of
-a hash collision. It makes $q_\ell=(r+t_\ell)\lceil N_\ell/d\rceil$ queries of locality $d$ at
+a hash collision. It makes $q_\ell=(r+t_\ell)\lceil N_\ell/d\rceil$ probes of locality $d$ at
 operation $\ell$.
 (b)~Fix a target layer of width $N$, row length $k$ and $t$ columns. In the ideal-oracle model,
 every verifier that reads this layer through a commitment of locality $d$ that reveals nothing about
@@ -370,8 +370,8 @@ $(r+t)/(1-2^{-\lambda})$ if $d$ divides $N$.
 \end{corollary}
 
 \begin{proof}
-(a)~If $y\neq M(x)$, some claim is wrong, since the verifier recomputes every operation without
-weights. All claims are fixed before any $\chi$ is drawn. The first wrong weight operation has a
+(a)~If $y\neq M(x)$, some claim is wrong, since the verifier recomputes every weight-free
+operation. All claims are fixed before any $\chi$ is drawn. The first wrong weight operation has a
 correct input, which the verifier computed from $x$ and correct claims. By
 Proposition~\ref{prop:block}(ii) and~(iii), that operation passes with probability at most
 $2^{1-\beta}=2^{-\lambda}/L$. A union bound over the $L$ operations, as in Theorem~\ref{thm:sound},
@@ -389,10 +389,10 @@ ratio is $(r+t)(N+d-1)/((1-2^{-\lambda})N)<2(r+t)/(1-2^{-\lambda})$, and
 $r+t\le(1+1/\log_2p)\beta+2=O(\lambda+\log L)$ by Proposition~\ref{prop:block}(iii).
 \end{proof}
 
-\noindent The factor $O(\lambda+\log L)$ in~(b) reflects our counting convention, one query per folded
+\noindent The factor $O(\lambda+\log L)$ in~(b) reflects our counting convention, one probe per folded
 row and per opened column, not the problem. Opening whole blocks reaches a ratio below $(N+d-1)/N$
 (Remark~\ref{rem:block-count}(i)), and if each block's $r$ folded rows and its $t$ columns are counted
-as one query each, $V_{\mathrm{blk}}$ lies in $\mathrm{Spot}_d(2m)$ and the ratio is below
+as one probe each, $V_{\mathrm{blk}}$ lies in $\mathrm{Spot}_d(2m)$ and the ratio is below
 $4/(1-2^{-\lambda})$.
 
 \begin{remark}[what the count measures]
@@ -400,7 +400,7 @@ $4/(1-2^{-\lambda})$.
 Definition~\ref{def:spot} bounds the support of an answer, not its size. The threshold of
 Theorem~\ref{thm:dich}(a) therefore counts touched rows.
 
-(i)~\emph{Opening.} Suppose a query on block $b$ is answered with the block's $d$ rows, from a binding
+(i)~\emph{Opening.} Suppose a probe on block $b$ is answered with the block's $d$ rows, from a binding
 commitment of locality $d$ such as one salted hash per block. A verifier that opens $q\le m$ distinct
 uniform blocks and recomputes their claims is complete. In the ideal-oracle model it catches every
 forgery of the layer with probability at least $q/m$, which is $qd/N$ if $d$ divides $N$. So the bound
@@ -409,15 +409,15 @@ states for $d=1$. With $q=m$ the error is $0$ and $qd<N+d$ for every $d$. This i
 $\lceil N/d\rceil$-query algorithm for $\mathrm{OR}_N$ with $d$-row queries, and it downloads the
 layer.
 
-(ii)~\emph{Bundling.} Sent as one message, the $r$ folded rows of a block are one query, and the
+(ii)~\emph{Bundling.} Sent as one message, the $r$ folded rows of a block are one probe, and the
 block's $t$ columns, opened with one multiproof, are another. Under Definition~\ref{def:spot} as
-written, $V_{\mathrm{blk}}$ could thus be counted as making $2m$ queries. A single fold
+written, $V_{\mathrm{blk}}$ could thus be counted as making $2m$ probes. A single fold
 $\chi\in\mathbb K_s^N$ over an extension field $\mathbb K_s\supseteq\F$ of size at least $2^\beta$,
-such as that of Fact~\ref{fact:ext}, makes $m(1+t)$ queries under our convention. The proof of
+such as that of Fact~\ref{fact:ext}, makes $m(1+t)$ probes under our convention. The proof of
 Proposition~\ref{prop:block} goes through over $\mathbb K_s$, with $|\mathbb K_s|^{-1}$ in place of
 $p^{-r}$, since $D_{ij}\neq0$ is invertible in $\mathbb K_s$ and the Reed--Solomon code over
 $\mathbb K_s$ with the same points has the same distance. The factor $r+t$ in
-Proposition~\ref{prop:block}, as in Proposition~\ref{prop:amp}, comes from counting one query per
+Proposition~\ref{prop:block}, as in Proposition~\ref{prop:amp}, comes from counting one probe per
 folded row and one per column.
 
 (iii)~\emph{Mixing changes the size of the answers.} Per layer, $V_{\mathrm{blk}}$ receives $rkm$
@@ -434,8 +434,8 @@ $d=N$, cut into $m$ pieces. Locality $d$ adds the $(m-1)rk$ field elements of th
 and $m-1$ multiproofs. These estimates ignore the bias column and are not measured.
 
 (iv)~\emph{The ideal-oracle model.} There, a checked prover message is answered honestly, so the
-error of $V_{\mathrm{blk}}$ is at most $p^{-r}$, and its column queries are redundant: the $mr$
-folded rows alone, or $m$ queries with one fold over $\mathbb K_s$, already reach that error. This is
+error of $V_{\mathrm{blk}}$ is at most $p^{-r}$, and its column probes are redundant: the $mr$
+folded rows alone, or $m$ probes with one fold over $\mathbb K_s$, already reach that error. This is
 a second reason why the factor $O(\lambda+\log L)$ reflects the counting convention. The column
 checks are what make a real prover's folded rows behave as honest answers.
 \end{remark}
@@ -462,7 +462,7 @@ claim the lower bound in its presence.
 (iii)~\emph{Other codes.} For any row-wise linear code of relative distance $\delta$, the column term
 becomes $(1-\delta)^t$, as in Proposition~\ref{prop:amp}.
 
-(iv)~\emph{Spread of the queries.} Every block needs its $r$ folded rows and $t$ columns, since the
+(iv)~\emph{Spread of the probes.} Every block needs its $r$ folded rows and $t$ columns, since the
 prover chooses the blocks it lies about. If block $b$ receives $t_b$ columns, the proof gives
 $p^{-r}+\max_b\prod_{i<t_b}\frac{k-1-i}{n-i}$, which is no bound at all if some $t_b=0$: the prover
 then claims $Z=A'[X;\mathbf 1]$ for an $A'$ that differs from $A$ only in block $b$ and sends
@@ -486,7 +486,7 @@ Theorem~\ref{thm:guess-full} therefore hold in either of two cases. The first is
 commitment, for example Merkle leaves $H(s_i\Vert\theta_i)$ with fresh salts. The second is the
 random-oracle model with an unsalted tree, provided every leaf preimage (under the true rows and
 under the explanation) has min-entropy at least $\kappa$ given the view and the other leaves. In the
-second case add $2Q2^{-\kappa}+Q^22^{-\ell_H}$: the coupling of the two runs fails only if a hash
+second case add $2Q_H2^{-\kappa}+Q_H^22^{-\ell_H}$, for $Q_H$ hash queries: the coupling of the two runs fails only if a hash
 query hits one of the two preimages of leaf $u$, or if two hash queries collide. Trained weights
 have high-entropy rows, so this concerns the proof, not the attack or the measurements.
 \end{remark}
@@ -513,7 +513,7 @@ as proof chunks~\cite{slp} or (layer, token) cells~\cite{commitllm2026}.
 verifier that sees whole traces and caches opened rows checks them for free on later queries, and
 after about $N/q$ queries it has in effect downloaded the layer, which amounts to holding the
 weights. The path protocol opens trace values only along its path, so caching rows does not let it
-check unvisited nodes, and $1-(1-1/N)^k$ stays the detection bound for $k$ tampered queries chosen
+check unvisited nodes, and $1-(1-1/N)^k$ stays the detection bound for $k$ edited queries chosen
 by the provider.
 (v)~\emph{Transformers}: padding embeds the instance of Proposition~\ref{prop:worst} in every ReLU
 MLP with input dimension and a hidden width of at least $N$ and one further hidden layer. In a

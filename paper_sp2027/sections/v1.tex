@@ -20,19 +20,19 @@
 \section{V1: Smaller Proofs from Int8 Values}
 \label{sec:v1}
 
-At long prompts the proof of Section~\ref{sec:defence} (v0) consists mostly of claims. V1, an
-option next to v0, sends instead the int8 value that the next operation reads, and proves
-that the hidden claims map to these values.
+At long prompts the proof of Section~\ref{sec:defence} (v0) consists mostly of 32-bit claims. V1, an optional variant, sends instead the int8 value or residual increment that the
+next operation reads and proves that the hidden claims map to these values. This makes the proof
+\VOneRatioRandom{}$\times$ smaller at 2{,}048 tokens but slows the prover (Section~\ref{sec:eval-v1}).
 
 \subsection{Values and Windows}
 
 In a decoder, every weight operation other than the embeddings and the LM head is read by exactly
-one operation without weights. The query, key, value, gate and up projections (fc1 in OPT) feed a
+one weight-free operation. The query, key, value, gate and up projections (fc1 in OPT) feed a
 requantisation $a = \Vrq_\ell(Z_\ell)$, with $\Vrq_\ell(z) = \mathrm{clamp}(\Vshift_\ell(z), -127,
 127)$, $\Vshift_\ell(z) = \lfloor (m_\ell z + 2^{29})/2^{30} \rfloor$ and a public integer
 $m_\ell$. The attention output and down projections (fc2) feed a residual addition of $\Delta =
 \Vshift_\ell(Z_\ell)$, which clamps only the sum. V1 sends $s_\ell = a_\ell$ or $\Delta_\ell$
-instead of $Z_\ell$. The verifier still recomputes every operation without weights, as in step~(S1) of
+instead of $Z_\ell$. The verifier still recomputes every weight-free operation, as in step~(S1) of
 Section~\ref{sec:protocol}, and so knows each input $X_\ell$; it must be convinced that the hidden
 $Z_\ell = A_\ell \hat X_\ell$, with $\hat X_\ell = [X_\ell; \mathbf 1]$, maps to $s_\ell$.
 
@@ -44,7 +44,7 @@ $\Vshift_\ell(z) = v$, and $W_\ell(v) = \Vlo_\ell(v+1) - \Vlo_\ell(v)$. Then
 \end{equation}
 and $W_\ell(v)$ is $\lfloor 2^{30}/m_\ell \rfloor$ or $\lceil 2^{30}/m_\ell \rceil$. A clamped
 entry of a requantisation, with $a = \pm 127$ and $Z$ outside the window of $a$, is listed as an
-\emph{exception} with its exact pre-activation $z$; the verifier checks $|z| < 2^{29}$ and
+\emph{exception} with its exact claim $z$; the verifier checks $|z| < 2^{29}$ and
 $\Vrq_\ell(z) = a$ and gives the entry the window $[z, z+1)$.
 
 For entry $(i,j)$ of a \emph{cut} operation, one whose claims V1 replaces, let $L_{ij}$ be
@@ -72,9 +72,9 @@ width. The prover sends a multiplicity $\mu_\tau$ for each $\tau \in \Vtab$, and
   \label{eq:v1-logup}
 \end{equation}
 at a random $\alpha$, the left sum running over the $\Nleaf = \sum_{\ell \in \Vcut} N_\ell T$
-leaves of the cut set $\Vcut$. The usual logUp lemma needs fewer leaves than $p$, but our proofs
-have up to $\VOneLargeLeaves{}$ leaves, more than $p \approx 2.0 \cdot 10^9$, and $p$ equal leaves
-cancel. The verifier therefore checks two integer conditions.
+leaves of the cut set $\Vcut$. The usual logUp lemma needs fewer leaves than $p$, since $p$ equal leaves
+cancel; our proofs have up to $\VOneLargeLeaves{}$, more than $p \approx 2.0 \cdot 10^9$. The verifier
+therefore also checks, as integers, that each $\mu_\tau < p$ and that $\sum_\tau \mu_\tau = \Nleaf$.
 
 \begin{lemma}[integer multiplicities]
   \label{lem:v1-logup}
@@ -85,7 +85,9 @@ cancel. The verifier therefore checks two integer conditions.
 
 \subsection{Reducing the Lookup to the Commitment}
 
-The verifier cannot compute the leaves, which depend on the hidden claims. A fractional-sum GKR
+Unlike the lookups of zkLLM and DeepProve~\cite{zkllm,deepprove}, V1 adds no commitment: its leaves
+are affine in the committed weights. The verifier cannot compute the leaves, which
+depend on the hidden claims. A fractional-sum GKR
 protocol~\cite{gkr,papini2023logupgkr} reduces the left side of~\eqref{eq:v1-logup} to a root
 $\mathsf n_0/\mathsf d_0$ and, by degree-3 sum-checks~\cite{lfkn1992}, to claims $\hat{\mathsf n},
 \hat{\mathsf d}$ on the leaf layer's multilinear extensions at a random point $\rho =
@@ -111,25 +113,24 @@ $\bar x_\ell = \hat X_\ell e$, and the existing column check tests $u_\ell$ agai
 base-field folded rows instead of $r$. That check needs only that $u_\ell$ precedes the columns,
 not that $\chi_\ell$ is uniform. In $\Kpre$, whose secret vectors cannot anticipate $\chi_\ell$, the
 prover sends $y_\ell = A_\ell \bar x_\ell$, checked as $\chi_s^\T y_\ell = u_s \bar x_\ell$ for each
-secret vector $\chi_s$ and its folded row $u_s$. Unlike the lookups of zkLLM and
-DeepProve~\cite{zkllm,deepprove}, V1 thus adds no commitment: it looks up values affine in committed
-weights.
+secret vector $\chi_s$ and its folded row $u_s$.
 
 \subsection{Protocol and Soundness}
 
 \para{Cut set.} The cut set $\Vcut$ is a public function of the graph, the commitment plan and $T$,
 absorbed into the statement. An operation is cut if (P1)~its output is read only by a residual
 addition or by a requantisation whose clamp lies within $[-128, 127]$; (P2)~it spans all $T$
-positions; (P3)~its window widths lie in $[2, 2^{16}]$; (P4)~its honest pre-activations are below
+positions; (P3)~its window widths lie in $[2, 2^{16}]$; (P4)~its honest claims are below
 $2^{29}$ in magnitude; and (P5)~each width is shared by fewer than $2^{29}$ entries. A transposed
 matrix is cut with all its members or not at all. The other weight operations form the clear set
 $\Vclr$ and keep v0: the embeddings, the LM head, the single-position operations of the pruned last
 block, and any operation that fails a rule.
 
-\para{One query.} The prover sends the values $s_\ell$, the clear claims, the exceptions and the
-multiplicities; the verifier draws $\alpha \in \Fext \setminus (\F + \xi\F)$ and, in mode $\sC$,
-v0's vectors $\chi_\ell$ for the clear operations; the prover sends the GKR transcripts, then the
-folds of the cut and the clear operations; the columns are drawn last. The verifier checks~\eqref{eq:v1-logup} as
+\para{One query.} (1)~The prover sends the values $s_\ell$, the
+clear claims, the exceptions and the multiplicities; (2)~the verifier draws $\alpha \in \Fext
+\setminus (\F + \xi\F)$ and, in mode $\sC$, v0's vectors $\chi_\ell$ for the clear operations;
+(3)~the prover sends the GKR transcripts, then the folded rows of the cut and the clear operations;
+(4)~the verifier draws the columns. The verifier checks~\eqref{eq:v1-logup} as
 $\sum_\gamma \mathsf n_0^\gamma / \mathsf d_0^\gamma = \sum_\tau \mu_\tau / (\alpha - \tau)$ over
 the instances $\gamma$ (all checks: Appendix~\ref{app:v1}).
 
@@ -137,7 +138,8 @@ the instances $\gamma$ (all checks: Appendix~\ref{app:v1}).
   \label{thm:v1}
   Suppose that $C_M$ is computed honestly from the weights of $M$ and that the prover finds no hash
   collision. For every input $x$ and every prover, the V1 verifier of mode $\sC$ accepts an output
-  $y \neq M(x)$ (in a generation query, an output that violates the token rule) with probability
+  $y \neq M(x)$ (for a generated response, one that violates the token rule of
+  Section~\ref{sec:gen-prefill}) with probability
   at most
   \[
     \begin{aligned}
@@ -160,10 +162,10 @@ the instances $\gamma$ (all checks: Appendix~\ref{app:v1}).
 operation; its input is honest. A clear $\ell^\ast$ is caught as in Theorem~\ref{thm:sound}. A cut
 $\ell^\ast$ has, by (P4) and the range checks, a leaf outside $\Vtab$, so by
 Lemma~\ref{lem:v1-logup} the two sides of~\eqref{eq:v1-logup} differ at $\alpha$ except with the
-first term. GKR carries the wrong root to the final claims, whose check fails unless a fold is
-wrong, which the column check or the secret vectors catch. \qed
+first term. GKR carries the wrong root to the final claims, whose check fails unless a folded row
+is wrong, which the column check or the secret vectors catch. \qed
 
 \smallskip
 \noindent At $\lambda=128$ the new terms change neither $r$ nor the column counts
 (Table~\ref{tab:params}). V1 is implemented for modes $\sC$ and $\Kpre$, with a GKR prover in
-Triton~\cite{tillet2019triton}; Section~\ref{sec:eval-v1} gives its costs.
+Triton~\cite{tillet2019triton}.

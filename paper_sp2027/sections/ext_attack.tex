@@ -11,18 +11,18 @@ rows of the target layer are behind the commitment oracle. A row-wise commitment
 protocol, has locality $d=1$ as long as its openings reveal nothing about unopened rows
 (Remark~\ref{rem:merkle}). A column of the Reed--Solomon commitment of Section~\ref{sec:defence},
 or a random combination $\chi^{\top}\!A$ of the layer's rows, has support $[N]$. In the target
-layer, $s$ paths make $s$ queries of locality~$1$.
+layer, $s$ paths make $s$ probes of locality~$1$.
 
 \para{Prover messages and succinct arguments.} The model treats every prover message that the
-verifier checks against the commitment as an oracle query. Its support is the set of rows on which
+verifier checks against the commitment as a probe. Its support is the set of rows on which
 the honest message depends. This is what the lower bound needs: the adversary answers every
 message as the honest prover of the explaining instance $\theta'$ would, and a message whose
 support avoids the edited row $u$ is then the same under $\theta$ and under $\theta'$. A folded row
 $\chi^{\top}\!A$ depends on all rows, and so does the proof of a succinct argument about the layer.
-A verifier that checks such a proof therefore makes a query of support $[N]$. It lies in
+A verifier that checks such a proof therefore makes a probe of support $[N]$. It lies in
 $\mathrm{Spot}_N(q)$, where the guessing bound $G_{qd}$ of Theorem~\ref{thm:guess} equals $1$ as
 soon as $qd\ge N$. This is the sense in which SNARK-assisted verifiers are outside the model: the lower bound says nothing
-about them, and part~(b) of Theorem~\ref{thm:dich} shows that queries of support $[N]$ can indeed
+about them, and part~(b) of Theorem~\ref{thm:dich} shows that probes of support $[N]$ can indeed
 reach soundness $2^{-\lambda}$.
 
 \para{Why recomputation matters.} The edited trace is the honest trace of an admissible model that
@@ -80,8 +80,8 @@ differently. The forgeries that Anchuri et al.\ consider are their substitute mo
 and~F and Section~7.2 of~\cite{anchuri2026verifiable}); on the MLP they corrupt hundreds of its 778
 trace nodes.
 
-\para{MNIST, further results.} One tampered neuron passes 250 paths \SokPathMany{}\% of the time. Keeping each
-tampered value below its neuron's 95th percentile takes about \MnistStealthNeurons{} neurons and passes \MnistStealthPass{}\% of the
+\para{MNIST, further results.} One edited neuron passes 250 paths \SokPathMany{}\% of the time. Keeping each
+edited value below its neuron's 95th percentile takes about \MnistStealthNeurons{} neurons and passes \MnistStealthPass{}\% of the
 time under uniform sampling. With percentiles from \StealthCalib{} training images and \LocatorQueries{} disjoint test
 queries, the edit changes \StealthNeurons{} neurons on average, passes \StealthPass{}\% of paths, keeps every edited value in
 range, and exceeds a neuron's natural maximum no more often than the honest trace (\StealthExceed{}\% of queries in
@@ -133,9 +133,9 @@ before~\cite{zhang2022pol,fang2023pol}; Table~\ref{tab:sok} lists only the nine 
 The full version of~\cite{anchuri2026verifiable} (Appendix~D of arXiv:2603.19025v1~\cite{anchuri2026full}) adds a
 protocol in the refereed model: two servers commit to hash-chained traces, at least one of them is
 assumed honest, and the referee bisects to the first position where the two commitments disagree
-and checks that node against its committed weights. Its queries are positions that the second
+and checks that node against its committed weights. Its probes are positions that the second
 server's answers determine, and these answers depend on the true trace and hence on the edited
-site, whereas a verifier in $\mathrm{Spot}_d(q)$ chooses its queries from the view $P$, its coins
+site, whereas a verifier in $\mathrm{Spot}_d(q)$ chooses its probes from the view $P$, its coins
 and the oracle's answers alone; each compared entry also hashes all earlier activations, so its
 support is not bounded by any $d<N$. The variant thus lies outside Definition~\ref{def:spot}, and
 against our single-site edit the bisection ends at the edited neuron, which fails its check. Its
@@ -197,11 +197,11 @@ claim for binary classifiers and for the soundness goal of TensorCommitments.
 \subsection{The Lower Bound: Further Remarks}
 \label{ext:attack-bound}
 
-\para{The reference oracle.} The expected number of queries $q$ in Definition~\ref{def:spot} is
+\para{The reference oracle.} The expected number of probes $q$ in Definition~\ref{def:spot} is
 measured under the reference oracle $R_p$ of Definition~\ref{def:H}. That oracle matches the real
 run until the edited neuron is touched, and this is all that the proof of Theorem~\ref{thm:guess}
 uses: detection requires a touch of the edited row, and the probability of a touch is fixed by the
-run up to the choice of that query.
+run up to the choice of that probe.
 
 \para{Relation to PCPs of proximity and holographic proofs.} The verifiers of PCPs of proximity and
 of holographic proofs~\cite{bghsv2006robust,bfls1991} read only part of their input. Ours reads all

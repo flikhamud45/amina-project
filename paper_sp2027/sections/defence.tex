@@ -19,15 +19,13 @@ By Theorem~\ref{thm:dich}, a verifier that reaches soundness $2^{-\lambda}$ with
 every row must use checks that each mix many rows of a weight matrix. Our defence applies the
 evaluation protocol of a linear-code polynomial commitment~\cite{ligero,brakedown} to every matrix
 product: Freivalds' algorithm~\cite{freivalds1977} tests random combinations of all neurons of each
-weight operation, and a client without the weights checks each combination against a
-Reed--Solomon-encoded, Merkle-committed copy of them. In mode $\sC$ the client (verifier) holds
+weight operation, and a verifier without the weights checks each combination against a
+Reed--Solomon-encoded, Merkle-committed copy of them. A wrong output is then caught with
+probability at least $1-2^{-\lambda}$. In mode $\sC$ the verifier holds
 only a commitment $C_M$ to the weights, as in the path protocol~\cite{anchuri2026verifiable}; in mode $\sK$ it holds the weights. In mode $\Kpre$
 it needs them once, to derive a key~\cite{slalom,commitllm2026} that it stores instead
 (\KpreStoreGB{}\,GB for Llama-2-7B): secret Freivalds vectors with their folded rows
 (\KpreKeyMB{}\,MB) and the embedding tables (\KpreEmbedMB{}\,MB), whose rows it looks up itself.
-For open weights anyone can recompute $C_M$ (Section~\ref{sec:threat}): in our runs, builds of the
-certified OPT-125M with \DigestThreadsOptS{} threads are identical bit for bit, and so are OPT-1.3B's
-builds and commitments with \DigestEncodingOptM{} encoding.
 
 \subsection{The Exact Integer Model}
 \label{sec:intmodel}
@@ -50,11 +48,11 @@ integers, integer norms, 256-entry tables for activations and the softmax expone
 language model the next-token logits; Section~\ref{sec:gen} covers generated responses. Integer sums
 do not depend on their order, so prover and verifier agree on any hardware: int8 products sum
 exactly in 32-bit integers on tensor cores, and attention runs in float32 within its exact range.
-The checks run in the BabyBear field $\F$, $p=15\cdot2^{27}+1\approx2^{31}$. The verifier rejects
-every claim with $|z|\ge2^{29}$, and setup checks that honest claims are smaller
-($128\sum_c|w_{ic}|+|b_i|<2^{29}$ for every row $i$ of a product, $\max_c|w_{ic}|+|b_i|<2^{29}$ for
-an embedding). A wrong claim and the correct value thus
-differ by less than $2^{30}<p$ and remain distinct in $\F$.
+The checks run in the BabyBear field $\F$, $p=15\cdot2^{27}+1\approx2^{31}$. To keep a wrong claim
+distinct from the correct value in $\F$, the verifier rejects every claim with $|z|\ge2^{29}$, and
+setup checks that honest claims are smaller ($128\sum_c|w_{ic}|+|b_i|<2^{29}$ for every row $i$ of
+a product, $\max_c|w_{ic}|+|b_i|<2^{29}$ for an embedding); the two then differ by less than
+$2^{30}<p$.
 
 \subsection{Committing to the Weights}
 \label{sec:commit}
@@ -74,12 +72,12 @@ encode the rows of $A_\ell^\T$, the \emph{transposed layout}).
 
 With $y$, the prover sends the \emph{claims} $Z_\ell$ of every weight operation, $y$ among them. All
 claims are correct if and only if, for every weight operation $\ell$, (S1)~$X_\ell$ follows from $x$
-and the earlier claims through the operations without weights,
+and the earlier claims through the weight-free operations,
 (S2)~$Z_\ell=A_\ell[X_\ell;\mathbf 1]$, and (S3)~$A_\ell$ is the committed matrix. In mode $\sC$ a
 query has three rounds: the claims; the vectors $\chi$ and the folded rows; the column positions and
 the opened columns.
 
-\para{(S1): recomputation.} The verifier itself recomputes every operation without weights, such as
+\para{(S1): recomputation.} The verifier itself recomputes every weight-free operation, such as
 attention, from checked values; none is proved. This chains the checks: no prover can pass one
 check with one value and feed another into the next.
 
@@ -154,39 +152,45 @@ draws interactively and Fiat--Shamir~\cite{fiatshamir1986} derives from a hash o
 
 \para{The statement binds the computation.} Challenges that do not depend on the whole statement
 make one transcript valid for several statements, the weak Fiat--Shamir
-pattern~\cite{bernhard2012pitfalls,dao2023weakfs}. Since our verifier recomputes the operations
-without weights, their constants belong to the statement. The transcript, a domain-separated
+pattern~\cite{bernhard2012pitfalls,dao2023weakfs}. Since our verifier recomputes the weight-free
+operations, their constants belong to the statement. The transcript, a domain-separated
 SHAKE-256 sponge over labelled, length-prefixed messages, therefore starts with a \emph{graph
 digest}, the SHA-256 hash of a canonical graph description: every operation in order with its
 inputs, output and constants (table bytes included), and each weight operation's shape, layout and
 input bound. It then absorbs the security parameters, $C_M$, $x$ and, for sampled generation, the
 sampler's parameters and the client's seed (Section~\ref{sec:gen}).
 
-\para{Soundness.} The interactive protocol is round-by-round sound~\cite{canetti2019fs}: once a
+\para{Non-interactive soundness.} Against $Q_H\le2^{64}$ random-oracle queries, soundness
+$2^{-\lambda}$ costs $r=7$ instead of 5 at $\lambda=128$. The interactive protocol is
+round-by-round sound~\cite{canetti2019fs}: once a
 wrong claim is fixed, the vectors $\chi$ rescue the prover with probability at most $p^{-r}$, and
 once a wrong folded row is fixed, the columns rescue it with probability at most its column term. A
-prover that makes $Q$ random-oracle queries therefore succeeds with probability at most
-$Q\varepsilon_{\mathrm{rbr}}+O(Q^22^{-256})$~\cite{canetti2019fs,holmgren2019rbr,bcs16}, where the
+prover that makes $Q_H$ random-oracle queries therefore succeeds with probability at most
+$Q_H\varepsilon_{\mathrm{rbr}}+O(Q_H^22^{-256})$~\cite{canetti2019fs,holmgren2019rbr,bcs16}, where the
 round-by-round error $\varepsilon_{\mathrm{rbr}}$ is the largest of these probabilities, not their
-sum, and so at most $\varepsilon_{\sC}$ (Appendix~\ref{app:sound}). For simplicity our parameters
-keep the union bound: we add 64 bits to $\beta$, which keeps $Q\varepsilon_{\sC}\le2^{-\lambda}$
-for $Q\le2^{64}$ and raises $r$ to 7 at $\lambda=128$; bounding $Q\varepsilon_{\mathrm{rbr}}$ alone
-would still need $r=7$.
+sum, and so at most $\varepsilon_{\sC}$ (Appendix~\ref{app:sound}). Our parameters add 64
+bits to $\beta$ (union bound); bounding
+$Q_H\varepsilon_{\mathrm{rbr}}$ alone would also need $r=7$.
 
 \subsection{Untrusted Commitments}
 \label{sec:setup-proof}
 
-Theorem~\ref{thm:sound} assumes an honest $C_M$. A Merkle root can bind any matrix $E_j$, not only
+Theorem~\ref{thm:sound} assumes an honest $C_M$. For open weights anyone can recompute it
+(Section~\ref{sec:threat}): in our runs, builds of the certified OPT-125M with
+\DigestThreadsOptS{} threads are identical bit for bit, and so are OPT-1.3B's builds and
+commitments with \DigestEncodingOptM{} encoding. Otherwise a one-time setup proof removes the
+assumption. A Merkle root can bind any matrix $E_j$, not only
 a matrix of codewords, which is why linear-code polynomial commitments pair each evaluation with a
 testing phase~\cite{ligero,brakedown}. Without it, a committer can bind the encoded columns of two
 models that differ in matrix $j$ on complementary halves of the positions of $j$'s tree; a prover
 that computes with the second passes the column check with probability
 $\prod_{i<t}(n/2-i)/(n-i)\approx2^{-t}$, about $2^{-\ParamsColumnsMinInt{}}$ per query
 ($2^{-\ParamsColumnsMinFs{}}$ under Fiat--Shamir) for the tree of Llama-2-7B with the fewest
-columns. When nobody the client trusts can recompute $C_M$, the committer therefore publishes, once
-per model, a non-interactive \emph{setup proof}: it opens $t^0_j$ columns of each tree and shows
-that each $E_j$ differs from a codeword matrix $\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$
-columns. The verifier then accepts only outputs of the model with weights $A^*$, except with the
+columns.
+
+The committer then publishes, once per model, a non-interactive \emph{setup proof}: it opens
+$t^0_j$ columns of each tree and shows that each $E_j$ differs from a codeword matrix
+$\enc(A^*_j)$ on at most $e_j<(n_j-k_j+1)/2$ columns (radius $e_j$). The verifier then accepts only outputs of the model with weights $A^*$, except with the
 error of Theorem~\ref{thm:sound} with $k_j+e_j$ in place of $k_j$ (Theorem~\ref{thm:untrusted},
 Appendix~\ref{app:untrusted}); without the weights or a range proof, the client learns only that
 the provider is bound to this one model. For Llama-2-7B at $\lambda=128$, with radii chosen for

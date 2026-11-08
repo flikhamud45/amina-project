@@ -32,7 +32,7 @@ $\sC$, and the range check. In $\Kpre$ the token rule can run online as claims a
 \para{Soundness, in detail.} Suppose some $y_i$ is not the greedy token. The verifier computes the
 argmax from the claimed logits at position $P+i-1$, so the token rule passes only if those claimed
 logits differ from the model's logits on the same prefix, so some claim is wrong. The verifier
-recomputes every operation without weights and rejects a wrong claim of one, so the first wrong claim
+recomputes every weight-free operation and rejects a wrong claim of one, so the first wrong claim
 that can pass is that of a weight operation whose input is correct. Freivalds' check then fails except with probability $p^{-r}$ per matrix, or
 the column check of mode $\sC$ fails except with its column term (Theorem~\ref{thm:sound}).
 
@@ -220,7 +220,7 @@ scores exact next-token predictions; the integer model picks the fp16 answer on
 smoothing reach $\times$\pviLoHi{\RowScalesLo}{\RowScalesHi}{--} on OPT-125M at 128 tokens, with top-1 agreement
 \pviLoHi{\RowScalesTopOneLo}{\RowScalesTopOneHi}{ to },
 but do not help at 2{,}048 tokens. They give a requantisation four multipliers. v0 recomputes such a
-requantisation like any other operation without weights, but V1's windows assume one multiplier per operation, so we do not adopt them; supporting a few
+requantisation like any other weight-free operation, but V1's windows assume one multiplier per operation, so we do not adopt them; supporting a few
 multipliers per operation in V1 would remove this restriction.
 
 \para{Further published results.} ZeroQuant-V2's setting uses 8-bit per-token dynamic activations
