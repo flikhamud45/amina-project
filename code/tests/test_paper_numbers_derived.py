@@ -568,3 +568,21 @@ def test_the_gate_and_the_smoke_fill_no_v1_bound(run_dir):
     assert {r.tier for r in ctx.run.kind("v1")} >= {"gate", "smoke"}
     v, _ = _macros(ctx)
     assert v["VOneExtrasMax"] == "0.91"
+
+
+def test_the_image_models_path_counts_carry_their_lambda(tmp_path):
+    t = tmp_path / "tables_test"
+    t.mkdir()
+    with open(t / "measured_summary.csv", "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["suite", "model", "cell", "metric", "batch", "attack", "lam", "stage", "k", "n", "median", "mean",
+                    "prover_hw", "verifier_hw"])
+        # costs/bench.py's record (lam = --path-lam), and a table aggregated without the column
+        w.writerow(["cnn", "vgg11", "sampling_wire", "paths_needed_penultimate", "", "", M.PATH_LAM, "", "", 1,
+                    14182.0, 14182.0, "", ""])
+        w.writerow(["cnn", "lenet5", "sampling_wire", "paths_needed_penultimate", "", "", "", "", "", 1,
+                    2316.0, 2316.0, "", ""])
+    b = B.Bench(t)
+    assert M.paths_needed(b, "vgg11", "sampling_wire") == 14182.0
+    assert M.paths_needed(b, "lenet5", "sampling_wire") == 2316.0
+    assert M.paths_needed(b, "vgg16", "sampling_wire") is None

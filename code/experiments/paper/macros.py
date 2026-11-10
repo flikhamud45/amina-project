@@ -511,6 +511,9 @@ def outcomes(c: Collector, ctx: T.Ctx) -> None:
 
 # ================================================================================================ cost of the defence
 CNN_MODELS = ("mlp_mnist", "lenet5", "vgg11", "vgg16", "resnet18_cifar", "resnet18_224")
+PATH_LAM = 40
+"""The soundness target ``2^-PATH_LAM`` of the image models' path counts (``costs/bench.py --path-lam``, its
+default): ``paths_needed_penultimate`` is stored with ``lam`` set to it."""
 TREE_CHUNK = 1 << 22
 """The chunk of a message that the Fiat--Shamir transcript hashes into one leaf (``pvi.v0.transcript``'s
 ``absorb_large``; ``ext_proofs.tex``)."""
@@ -600,7 +603,7 @@ def serving(c: Collector, ctx: T.Ctx) -> None:
     """The serving harness (the serve tier, ``serve_ab.py``): the prover against unverified serving (``u1``: the same
     integer model without proofs, ``u2``: an fp16 decoder) in time, energy and proof bytes per token."""
     run = ctx.run
-    r = {mode: run.serve("opt-1.3b", 2048, 1, mode, "seq") for mode in ("Kpre", "C")}
+    r = {mode: run.serve("opt-1.3b", 2048, 1, mode, "single") for mode in ("Kpre", "C")}
 
     def med(rec, k, sub=None):
         if rec is None:
@@ -622,15 +625,15 @@ def serving(c: Collector, ctx: T.Ctx) -> None:
     c.put("ServeBatchOverUTwo", med(bat, "prover_over_u2", "fp16"), bat, lambda v: f"{v:.0f}")
     c.todo("TodoServing")
     c.todo("TodoServingExt")
-    one = run.serve("opt-1.3b", 64, 1, "C", "seq")
+    one = run.serve("opt-1.3b", 64, 1, "C", "single")
     batch_c = run.serve("opt-1.3b", 64, 64, "C", "joint")
     c.put("ServeSingleMBPerTokenC", one and one.d.get("proof_mb_per_token"), one, lambda v: f"{v:.2f}")
     c.put("ServeBatchMBPerTokenC", batch_c and batch_c.d.get("proof_mb_per_token"), batch_c, lambda v: f"{v:.2f}")
     cells_a = ((64, 1), (512, 1), (2048, 1))
     for mode, name, fmt in (("Kpre", "Kpre", lambda v: f"{v:.1f}"), ("C", "C", lambda v: f"{v:.0f}")):
-        rs = [run.serve("llama2-7b", s, bsz, mode, "seq") for s, bsz in cells_a]
+        rs = [run.serve("llama2-7b", s, bsz, mode, "single") for s, bsz in cells_a]
         _range(c, f"ServeLlama{name}OverUTwo", [med(x, "prover_over_u2", "fp16") for x in rs], rs[-1], fmt)
-    rs = [run.serve("opt-1.3b", s, bsz, "Kpre", "seq") for s, bsz in cells_a]
+    rs = [run.serve("opt-1.3b", s, bsz, "Kpre", "single") for s, bsz in cells_a]
     _range(c, "ServeOptMUOneOverUTwo", [med(x, "u1_over_u2", "fp16") for x in rs], rs[-1], lambda v: f"{v:.0f}")
 
     def energy_ratio(rec):        # the prover's GPU energy per proved prompt over fp16 serving's (NVML's counter)
@@ -936,6 +939,13 @@ def sok(c: Collector, ctx: T.Ctx) -> None:
     for row in S.values():
         c.put("Sok" + row["name"], row["value"], f"attack/sok.py: {row['setting']}, {row['formula']}",
               lambda v, p=row["printed"]: f.thousands(p))
+
+
+def paths_needed(b, model: str, cell: str) -> float | None:
+    """An image model's path count for ``2^-PATH_LAM`` (``paths_needed_penultimate``): ``bench.py`` records it with
+    ``lam``; tables aggregated without that column hold it without one."""
+    v = b.cnn_metric(model, cell, "paths_needed_penultimate", lam=PATH_LAM)
+    return v if v is not None else b.cnn_metric(model, cell, "paths_needed_penultimate")
 
 
 FORMULA = (("AttackOptLPaths", "SokPathsOptL"), ("PathsLlama", "SokPathsLlama"), ("CnnPathsResNet", "SokPathsWide"))
@@ -1884,14 +1894,14 @@ def attack(c: Collector, ctx: T.Ctx) -> None:
             pd[m] = None
             continue
         pd[m] = b.cnn_metric(m, cell, "p_detect_penultimate")
-        need.append(b.cnn_metric(m, cell, "paths_needed_penultimate"))
+        need.append(paths_needed(b, m, cell))
         minnode.append(b.cnn_metric(m, cell, "p_detect_min_node"))
     ok = [v for v in pd.values() if v]
     c.put("CnnPathLenet", pd.get("lenet5"), b.name, lambda v: f"1/{round(1 / v)}")
     c.put("CnnPathMax", min(ok) if ok else None, b.name, lambda v: f"1/{round(1 / v)}")
     _range(c, "CnnPathsRange", need if need and None not in need else [None], b.name, f.num)
     cell = next(iter(b.cnn_cells("resnet18_224", "sampling")), None)
-    c.put("CnnPathsResNet", cell and b.cnn_metric("resnet18_224", cell, "paths_needed_penultimate"), b.name, f.num)
+    c.put("CnnPathsResNet", cell and paths_needed(b, "resnet18_224", cell), b.name, f.num)
     c.put("CnnMinNode", min(minnode) if minnode and None not in minnode else None, b.name,
           lambda v: f"{1 / v / 1e6:.0f}")
     c.put("PathPassResNet", pd.get("resnet18_224"), b.name, lambda v: f"${round(1 / v) - 1}/{round(1 / v)}$")

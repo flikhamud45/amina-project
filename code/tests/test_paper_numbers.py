@@ -362,8 +362,8 @@ def _logs(tmp: Path) -> Path:
                                               reexec(m, 64, "float", 0.034, device="cuda"),
                                               reexec(m, 2048, "int", 1.65, device="cuda"),
                                               reexec(m, 2048, "float", 0.64, device="cuda")])
-    _write(logs, "sp-serve-opt13-11.out", [serve("opt-1.3b", 2048, 1, "Kpre", "seq", 2.1, 0.51, 0.11),
-                                           serve("opt-1.3b", 2048, 1, "C", "seq", 4.4, 0.51, 0.11),
+    _write(logs, "sp-serve-opt13-11.out", [serve("opt-1.3b", 2048, 1, "Kpre", "single", 2.1, 0.51, 0.11),
+                                           serve("opt-1.3b", 2048, 1, "C", "single", 4.4, 0.51, 0.11),
                                            serve("opt-1.3b", 64, 64, "Kpre", "joint", 3.4, 0.71, 0.19),
                                            {"row": "on_request", "model": "opt-1.3b", "seq": 2048, "batch": 1,
                                             "serve_s": {"median": 0.5}, "prob_max": 2047, "env": _env()}])
