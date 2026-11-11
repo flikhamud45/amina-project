@@ -1,4 +1,4 @@
-# Certified but Compromised: Breaking and Fixing Lightweight Proofs of Inference
+# Sampling Is Not Enough: Fast and Sound Proofs of Inference
 
 The LaTeX source of the paper and its artifact: the code, the stored measurements, the run that produces every
 number of the paper, and the pipeline from that run's records to the paper's tables and text.
