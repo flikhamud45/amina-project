@@ -369,7 +369,7 @@ def test_serving_energy_per_call():
 def test_the_serving_energy_macro():
     def rec(mode, p, u):
         return R.Rec("serve", "serve-opt13", "1", "sp-serve-opt13-1.out", 1, "serve",
-                     {"row": "prove", "model": "opt-1.3b", "seq": 2048, "batch": 1, "mode": mode, "batch_proof": "seq",
+                     {"row": "prove", "model": "opt-1.3b", "seq": 2048, "batch": 1, "mode": mode, "batch_proof": "single",
                       "layers": None, "energy_j": {"prover": {"joules": p}, "fp16": {"joules": u}}})
     c = M.Collector()
     M.serving(c, T.Ctx(R.Run([rec("Kpre", 30.0, 1.5), rec("C", 60.0, 1.5)]), Bench(None), {}))
