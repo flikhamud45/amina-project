@@ -519,7 +519,10 @@ def main() -> int:
                         measured[n_layers] = statistics.median(times)
                         spread[n_layers] = [min(times), max(times)]
                         raw[n_layers] = list(times)
+                        # the next variant or block count is built without this one's weights in memory: an fp16
+                        # Llama-2-13B (26 GB) beside its int8 graph exceeds a 44.5 GB GPU
                         del run
+                        graph = model = None
                         if device.type == "cuda":
                             torch.cuda.empty_cache()
                 except IntMMUnavailable as e:
